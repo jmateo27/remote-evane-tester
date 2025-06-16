@@ -1,5 +1,8 @@
 import machine
 import time
+import aioble
+import bluetooth
+import asyncio
 
 ENABLE_LATENCY_S = 1.0
 MEASUREMENT_LATENCY_MS = 1000
@@ -33,16 +36,97 @@ class ADC_Interface:
     def measure_vref(self):
         return self.vref_adc.read_u16() * self.ADC_MAX_VOLTAGE / self.ADC_MAX_READING
     
-if __name__ == "__main__":
-    enable = Enable_Interface()
-    adcs = ADC_Interface()
+class Main_Bluetooth_Transmission:
+
+    # Bluetooth parameters
+    BLE_NAME = "TRANSMITTER"
+    BLE_SVC_UUID = bluetooth.UUID(0x181A)
+    BLE_CHARACTERISTIC_UUID = bluetooth.UUID(0x2A6E)
+    BLE_APPEARANCE = 0x0300
+    BLE_ADVERTISING_INTERVAL = 2000
+    BLE_SCAN_LENGTH = 5000
+    BLE_INTERVAL = 30000
+    BLE_WINDOW = 30000
+
+    SEND_LATENCY_S = 1
+
+    def __init__(self):
+        self.enable = Enable_Interface()
+        self.adcs = ADC_Interface()
+        self.enable.on()
+        time.sleep(3)
+        self.vane_init = self.adcs.measure_vane()
+        self.vref_init = self.adcs.measure_vref()
+
+    def encode_message(self, message):
+        """ Encode a message to bytes """
+        return message.encode('utf-8')
     
-    enable.on()
-    
-    time.sleep(3) # Wait to get baseline
-    vane_init = adcs.measure_vane()
-    vref_init = adcs.measure_vref()
+    async def send_data_task(self, connection, characteristic):
+        """ Send data to the connected device """
+        while True:
+            if not connection:
+                print("error - no connection in send data")
+                continue
+
+            if not characteristic:
+                print("error no characteristic provided in send data")
+                continue
+            
+            # Determine the message depending on the shared variable
+            sMessage = "Baseline={:.8f},Vref={:.8f},Reading={:8f}".format(self.vane_init, self.adcs.measure_vref(), self.adcs.measure_vane())
+
+            print(f'Sending message: {sMessage}')
+
+            try:
+                msg = self.encode_message(sMessage)
+                characteristic.write(msg)
+                
+            except Exception as e:
+                print(f"writing error {e}")
+                continue
+
+            await asyncio.sleep(self.SEND_LATENCY_S)
+
+    async def run_transmitter_mode(self):
+        """ Run the transmitter mode """
+
+        # Set up the Bluetooth service and characteristic
+        ble_service = aioble.Service(self.BLE_SVC_UUID)
+        characteristic = aioble.Characteristic(
+            ble_service,
+            self.BLE_CHARACTERISTIC_UUID,
+            read=True,
+            notify=True,
+            write=True,
+            capture=True,
+        )
+        aioble.register_services(ble_service)
+
+        print(f"{self.BLE_NAME} starting to advertise")
+
+        while True:
+            async with await aioble.advertise(
+                self.BLE_ADVERTISING_INTERVAL,
+                name=self.BLE_NAME,
+                services=[self.BLE_SVC_UUID],
+                appearance=self.BLE_APPEARANCE) as connection:
+                print(f"{self.BLE_NAME} connected to another device: {connection.device}")
+
+                tasks = [
+                    asyncio.create_task(self.send_data_task(connection, characteristic)),
+                ]
+                await asyncio.gather(*tasks)
+                print(f"{self.BLE_NAME} disconnected")
+                break
+
+async def main():
+    btTransmit = Main_Bluetooth_Transmission()
     while True:
-        time.sleep_ms(MEASUREMENT_LATENCY_MS)
-        measurement = adcs.measure_vane()
-        print(f'Baseline:{vane_init}, Reading:{measurement}, Value:{measurement-vane_init}')
+        tasks = [
+            asyncio.create_task(btTransmit.run_transmitter_mode()),
+        ]
+        await asyncio.gather(*tasks)
+
+if __name__ == "__main__":
+    asyncio.run(main())
