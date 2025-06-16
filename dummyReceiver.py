@@ -19,7 +19,9 @@ def decode_message(message):
 
 async def receive_data_task(characteristic):
     """ Receive data from the connected device """
-    global message_count
+    baseline = 0
+    vref = 0
+    reading = 0    
     while True:
         try:
             data = await characteristic.read()
@@ -27,11 +29,23 @@ async def receive_data_task(characteristic):
             
             if data:
                 print(rMessage)
-                pairs = rMessage.split(',')
-                baseline = float(pairs[0].split('=')[1])
-                vref = float(pairs[1].split('=')[1])
-                reading = float(pairs[2].split('=')[1])
-                print(f"Baseline={baseline},Vref={vref},Reading={reading}")
+                msg_type = rMessage[0] # B or V
+                payload = rMessage[1:]
+
+                values = payload.split(',')
+                f1 = float(values[0])
+                f2 = float(values[1])
+
+                if msg_type == 'B':
+                    baseline = f1
+                elif msg_type == 'V':
+                    vref = f1
+                else:
+                    print("Error reading the message")
+
+                reading = f2
+
+                print(f"Baseline={baseline}, Vref={vref}, Reading={reading}, Value={reading-baseline}")
                 await asyncio.sleep(0.5)
 
         except asyncio.TimeoutError:

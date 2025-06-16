@@ -64,6 +64,7 @@ class Main_Bluetooth_Transmission:
     
     async def send_data_task(self, connection, characteristic):
         """ Send data to the connected device """
+        iter = 0
         while True:
             if not connection:
                 print("error - no connection in send data")
@@ -74,8 +75,13 @@ class Main_Bluetooth_Transmission:
                 continue
             
             # Determine the message depending on the shared variable
-            sMessage = "Baseline={:.8f},Vref={:.8f},Reading={:8f}".format(self.vane_init, self.adcs.measure_vref(), self.adcs.measure_vane())
 
+            if iter == 0:
+                sMessage = "B{:.6f},{:.6f}".format(self.vane_init, self.adcs.measure_vane())
+            else:
+                sMessage = "V{:.6f},{:.6f}".format(self.adcs.measure_vref(), self.adcs.measure_vane())
+            iter = (iter+1)%2
+            
             print(f'Sending message: {sMessage}')
 
             try:
