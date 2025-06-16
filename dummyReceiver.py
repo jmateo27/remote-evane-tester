@@ -1,9 +1,7 @@
-from lab1 import Lab1
 import aioble
 import bluetooth
 import asyncio
 from sys import exit
-import re
 
 # Bluetooth parameters
 BLE_NAME = "RECEIVER"  # You can dynamically change this if you want unique names
@@ -27,10 +25,12 @@ async def receive_data_task(characteristic):
             data = await characteristic.read()
             rMessage = decode_message(data) #rMeassage means Received Message
             
-            numbers = [float(x) for x in re.findall(r"-?\d+\.\d+", s)]
-            baseline, vref, reading = numbers
             if data:
                 print(rMessage)
+                pairs = rMessage.split(',')
+                baseline = float(pairs[0].split('=')[1])
+                vref = float(pairs[1].split('=')[1])
+                reading = float(pairs[2].split('=')[1])
                 print(f"Baseline={baseline},Vref={vref},Reading={reading}")
                 await asyncio.sleep(0.5)
 
