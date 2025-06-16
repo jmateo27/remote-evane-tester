@@ -36,14 +36,13 @@ class ADC_Interface:
 if __name__ == "__main__":
     enable = Enable_Interface()
     adcs = ADC_Interface()
+    
+    enable.on()
+    
     time.sleep(3) # Wait to get baseline
     vane_init = adcs.measure_vane()
     vref_init = adcs.measure_vref()
     while True:
         time.sleep_ms(MEASUREMENT_LATENCY_MS)
-        measurement = adcs.measure_vane() - vane_init
-        print(measurement)
-        # time.sleep(ENABLE_LATENCY_S)
-        # enable.on()
-        # time.sleep(ENABLE_LATENCY_S)
-        # enable.off()
+        measurement = adcs.measure_vane()
+        print(f'Baseline:{vane_init}, Reading:{measurement}, Value:{measurement-vane_init}')
