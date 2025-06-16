@@ -17,11 +17,21 @@ def decode_message(message):
     """ Decode a message from bytes """
     return message.decode('utf-8')
 
+def rolling_average(buff):
+    return sum(buff) / len(buff) if buff else 0
+
+def add_measurement(buff, newVal):
+    BUFFERSIZE = 10
+    buff.append(newVal)
+    if len(buff) > BUFFERSIZE:
+        buff.pop(0)
+
 async def receive_data_task(characteristic):
     """ Receive data from the connected device """
     baseline = 0
-    vref = 0
-    reading = 0    
+    
+    vref_rolling_buffer = []
+    reading_rolling_buffer = [] 
     while True:
         try:
             data = await characteristic.read()
@@ -39,13 +49,13 @@ async def receive_data_task(characteristic):
                 if msg_type == 'B':
                     baseline = f1
                 elif msg_type == 'V':
-                    vref = f1
+                    add_measurement(vref_rolling_buffer, f1)
                 else:
                     print("Error reading the message")
 
-                reading = f2
+                add_measurement(reading_rolling_buffer, f2)
 
-                print(f"Baseline={baseline}, Vref={vref}, Reading={reading}, Value={reading-baseline}")
+                print(f"Baseline={baseline}, Vref={rolling_average(vref_rolling_buffer)}, Reading={rolling_average(reading_rolling_buffer)}, Value={rolling_average(reading_rolling_buffer)-baseline}")
                 await asyncio.sleep(0.5)
 
         except asyncio.TimeoutError:

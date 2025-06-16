@@ -9,6 +9,7 @@ MEASUREMENT_LATENCY_MS = 1000
 
 class Enable_Interface:
     ENABLE_PIN = 16
+    ENABLE_RISE_TIME_S = 0.1
     def __init__(self):
         self.pin = machine.Pin(self.ENABLE_PIN, machine.Pin.OUT, value=0)
     
@@ -48,12 +49,12 @@ class Main_Bluetooth_Transmission:
     BLE_INTERVAL = 30000
     BLE_WINDOW = 30000
 
-    SEND_LATENCY_S = 1
+    SEND_LATENCY_S = 0.4
 
     def __init__(self):
         self.enable = Enable_Interface()
         self.adcs = ADC_Interface()
-        self.enable.on()
+        self.enable.off()
         time.sleep(3)
         self.vane_init = self.adcs.measure_vane()
         self.vref_init = self.adcs.measure_vref()
@@ -75,13 +76,15 @@ class Main_Bluetooth_Transmission:
                 continue
             
             # Determine the message depending on the shared variable
-
+            self.enable.on()
+            await asyncio.sleep(self.enable.ENABLE_RISE_TIME_S)
             if iter == 0:
                 sMessage = "B{:.6f},{:.6f}".format(self.vane_init, self.adcs.measure_vane())
             else:
                 sMessage = "V{:.6f},{:.6f}".format(self.adcs.measure_vref(), self.adcs.measure_vane())
+            self.enable.off()
             iter = (iter+1)%2
-            
+
             print(f'Sending message: {sMessage}')
 
             try:
