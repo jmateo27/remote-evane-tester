@@ -82,11 +82,11 @@ class Main_Bluetooth_Transmission:
             self.enable.on()
             await asyncio.sleep(self.enable.ENABLE_RISE_TIME_S)
             if iter == 0:
-                sMessage = "B{:.6f},{:.6f}".format(self.vane_init, self.adcs.measure_vane())
-            else:
                 sMessage = "V{:.6f},{:.6f}".format(self.adcs.measure_vref(), self.adcs.measure_vane())
+            else:
+                sMessage = "B{:.6f},{:.6f}".format(self.vane_init, self.adcs.measure_vane())
             self.enable.off()
-            iter = (iter+1)%2
+            iter = (iter+1)%3
 
             print(f'Sending message: {sMessage}')
 
