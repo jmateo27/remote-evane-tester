@@ -56,8 +56,11 @@ class Main_Bluetooth_Transmission:
         self.adcs = ADC_Interface()
         self.enable.off()
         time.sleep(3)
+        self.enable.on()
+        time.sleep(self.enable.ENABLE_RISE_TIME_S)
         self.vane_init = self.adcs.measure_vane()
         self.vref_init = self.adcs.measure_vref()
+        self.enable.off()
 
     def encode_message(self, message):
         """ Encode a message to bytes """

@@ -21,7 +21,7 @@ def rolling_average(buff):
     return sum(buff) / len(buff) if buff else 0
 
 def add_measurement(buff, newVal):
-    BUFFERSIZE = 10
+    BUFFERSIZE = 5
     buff.append(newVal)
     if len(buff) > BUFFERSIZE:
         buff.pop(0)
