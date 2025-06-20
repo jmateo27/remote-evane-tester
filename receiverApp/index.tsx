@@ -108,14 +108,15 @@ export default function App() {
           const firstFloat = parseFloat(firstStr);
           const secondFloat = parseFloat(secondStr);
 
-          if (type === 'B') {
-            if (!isNaN(firstFloat)) setBaseline(firstFloat);
+          if (!isNaN(secondFloat)) setReading(secondFloat);
+
+          if (type === 'B' && !isNaN(firstFloat)) {
+            setBaseline(firstFloat);
           } else if (type === 'V') {
-            setVref(firstFloat);
+            setVref(firstFloat);  // doesn't affect value calculation
           }
 
-          setReading(secondFloat);
-
+          // Always update Value if both Baseline and new Reading are valid
           if (!isNaN(secondFloat) && Baseline !== null) {
             setValue(secondFloat - Baseline);
           }
