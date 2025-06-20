@@ -1,14 +1,13 @@
 import { Buffer } from 'buffer';
 import React, { useEffect, useRef, useState } from 'react';
 import {
-  Alert,
+  ActivityIndicator,
   PermissionsAndroid,
   Platform,
   StyleSheet,
   Text,
-  View,
-  ActivityIndicator,
   ToastAndroid,
+  View
 } from 'react-native';
 import { BleManager, Device } from 'react-native-ble-plx';
 
@@ -126,12 +125,14 @@ export default function App() {
           const firstFloat = parseFloat(firstStr);
           const secondFloat = parseFloat(secondStr);
 
-          if (type === 'B') setBaseline(firstFloat);
-          else if (type === 'V') setVref(firstFloat);
+          if (type === 'B') {
+            setBaseline(firstFloat);
+          }
+          else if (type === 'V') {
+            setVref(firstFloat);
+          }
           setReading(secondFloat);
-          setValue(
-            type === 'B' ? secondFloat - firstFloat : Baseline !== null ? secondFloat - Baseline : null
-          );
+          setValue(secondFloat - Baseline)
         }
       }
     );
