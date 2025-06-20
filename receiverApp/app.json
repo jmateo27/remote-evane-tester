@@ -47,7 +47,19 @@
         }
       ],
       "react-native-ble-plx",
-      "react-native-permissions"
+      [
+        "react-native-permissions",
+        {
+          "android": {
+            "permissions": [
+              "android.permission.BLUETOOTH",
+              "android.permission.BLUETOOTH_ADMIN",
+              "android.permission.ACCESS_FINE_LOCATION"
+            ]
+          },
+          "ios": {}
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true
