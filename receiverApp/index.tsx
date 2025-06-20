@@ -7,7 +7,7 @@ import {
   StyleSheet,
   Text,
   ToastAndroid,
-  View,
+  View
 } from 'react-native';
 import { BleManager, Device } from 'react-native-ble-plx';
 
@@ -19,17 +19,13 @@ const TARGET_NAME = 'TRANSMITTER';
 
 export default function App() {
   const bleManager = useRef(new BleManager()).current;
-
-  // Use ref for baseline to get latest value synchronously inside notification callback
-  const baselineRef = useRef<number | null>(null);
+  const [connectedDevice, setConnectedDevice] = useState<Device | null>(null);
+  const [connecting, setConnecting] = useState(false);
 
   const [Baseline, setBaseline] = useState<number | null>(null);
   const [Vref, setVref] = useState<number | null>(null);
   const [Reading, setReading] = useState<number | null>(null);
   const [Value, setValue] = useState<number | null>(null);
-
-  const [connectedDevice, setConnectedDevice] = useState<Device | null>(null);
-  const [connecting, setConnecting] = useState(false);
 
   async function requestPermissions() {
     if (Platform.OS === 'android') {
@@ -70,11 +66,6 @@ export default function App() {
     return true;
   }
 
-  function updateBaseline(value: number) {
-    baselineRef.current = value;
-    setBaseline(value);
-  }
-
   async function startScanAndConnect() {
     const permission = await requestPermissions();
     if (!permission) return;
@@ -82,32 +73,41 @@ export default function App() {
     setConnecting(true);
     bleManager.stopDeviceScan();
 
-    bleManager.startDeviceScan(null, null, async (error, device) => {
-      if (error) {
-        console.warn('Scan error:', error);
-        setConnecting(false);
-        return;
-      }
-      if (device && device.name === TARGET_NAME) {
-        bleManager.stopDeviceScan();
-        try {
-          const connected = await device.connect();
-          await connected.discoverAllServicesAndCharacteristics();
-          setConnectedDevice(connected);
-          monitorNotifications(connected);
-
-          connected.onDisconnected(() => {
-            ToastAndroid.show('Device disconnected', ToastAndroid.SHORT);
-            disconnect();
-          });
-        } catch (e) {
-          console.warn('Connection failed:', e);
-          ToastAndroid.show('Connection failed', ToastAndroid.SHORT);
-        } finally {
+    bleManager.startDeviceScan(
+      null,
+      { allowDuplicates: false },
+      async (error, device) => {
+        if (error) {
+          console.warn('Scan error:', error);
           setConnecting(false);
+          return;
+        }
+
+        if (device?.name === TARGET_NAME) {
+          bleManager.stopDeviceScan();
+
+          try {
+            // Ensure clean state before connecting
+            await bleManager.cancelDeviceConnection(device.id);
+
+            const connected = await device.connect();
+            await connected.discoverAllServicesAndCharacteristics();
+            setConnectedDevice(connected);
+            monitorNotifications(connected);
+
+            connected.onDisconnected(() => {
+              ToastAndroid.show('Device disconnected', ToastAndroid.SHORT);
+              disconnect();
+            });
+          } catch (e) {
+            console.warn('Connection failed:', e);
+            ToastAndroid.show('Connection failed', ToastAndroid.SHORT);
+          } finally {
+            setConnecting(false);
+          }
         }
       }
-    });
+    );
   }
 
   function monitorNotifications(device: Device) {
@@ -123,7 +123,6 @@ export default function App() {
 
         if (characteristic?.value) {
           const decoded = Buffer.from(characteristic.value, 'base64').toString('utf-8');
-
           const isValid = /^[BV]-?\d+(\.\d+)?,-?\d+(\.\d+)?$/.test(decoded);
           if (!isValid) {
             console.warn('Invalid format:', decoded);
@@ -135,21 +134,16 @@ export default function App() {
           const firstFloat = parseFloat(firstStr);
           const secondFloat = parseFloat(secondStr);
 
-          if (isNaN(firstFloat) || isNaN(secondFloat)) {
-            console.warn('Invalid numbers:', firstFloat, secondFloat);
-            return;
-          }
-
-          setReading(secondFloat);
-
           if (type === 'B') {
-            updateBaseline(firstFloat);
+            setBaseline(firstFloat);
+            setReading(secondFloat);
+            setValue(secondFloat - firstFloat);
           } else if (type === 'V') {
             setVref(firstFloat);
-          }
-
-          if (baselineRef.current !== null) {
-            setValue(secondFloat - baselineRef.current);
+            setReading(secondFloat);
+            if (Baseline !== null) {
+              setValue(secondFloat - Baseline);
+            }
           }
         }
       }
@@ -193,17 +187,11 @@ export default function App() {
           <Text style={styles.connectedText}>Connected to {connectedDevice.name}</Text>
           <View style={styles.dataContainer}>
             <Text style={styles.dataText}>
-              Baseline: {Baseline !== null ? Baseline.toFixed(6) : '...'}
+              Baseline: {Baseline !== null ? Baseline.toFixed(6) : 'N/A'}
             </Text>
-            <Text style={styles.dataText}>
-              Vref: {Vref !== null ? Vref.toFixed(6) : '...'}
-            </Text>
-            <Text style={styles.dataText}>
-              Reading: {Reading !== null ? Reading.toFixed(6) : '...'}
-            </Text>
-            <Text style={styles.dataText}>
-              Value: {Value !== null ? Value.toFixed(6) : '...'}
-            </Text>
+            <Text style={styles.dataText}>Vref: {Vref !== null ? Vref.toFixed(6) : 'N/A'}</Text>
+            <Text style={styles.dataText}>Reading: {Reading !== null ? Reading.toFixed(6) : 'N/A'}</Text>
+            <Text style={styles.dataText}>Value: {Value !== null ? Value.toFixed(6) : 'N/A'}</Text>
           </View>
         </>
       )}
