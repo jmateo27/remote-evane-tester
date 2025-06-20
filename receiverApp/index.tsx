@@ -21,12 +21,11 @@ export default function App() {
   const bleManager = useRef(new BleManager()).current;
 
   const baselineRef = useRef<number | null>(null);
-  const reconnectingRef = useRef(false);
-
   const [Baseline, setBaseline] = useState<number | null>(null);
   const [Vref, setVref] = useState<number | null>(null);
   const [Reading, setReading] = useState<number | null>(null);
   const [Value, setValue] = useState<number | null>(null);
+
   const [connectedDevice, setConnectedDevice] = useState<Device | null>(null);
   const [connecting, setConnecting] = useState(false);
 
@@ -75,52 +74,54 @@ export default function App() {
   }
 
   async function startScanAndConnect() {
-    if (reconnectingRef.current) return;
-    reconnectingRef.current = true;
     const permission = await requestPermissions();
     if (!permission) return;
 
     setConnecting(true);
-    bleManager.stopDeviceScan();
+    let scanTimeout: NodeJS.Timeout;
 
-    bleManager.startDeviceScan(null, null, async (error, device) => {
-      if (error) {
-        console.warn('Scan error:', error);
-        setConnecting(false);
-        reconnectingRef.current = false;
-        return;
-      }
-      if (device && device.name === TARGET_NAME) {
-        bleManager.stopDeviceScan();
-        try {
-          const connected = await device.connect();
-          await connected.discoverAllServicesAndCharacteristics();
-          setConnectedDevice(connected);
-          monitorNotifications(connected);
-
-          connected.onDisconnected(() => {
-            ToastAndroid.show('Device disconnected', ToastAndroid.SHORT);
-            disconnect(); // triggers reconnect and cleanup
-          });
-        } catch (e) {
-          console.warn('Connection failed:', e);
-          ToastAndroid.show('Connection failed', ToastAndroid.SHORT);
-        } finally {
+    return new Promise<void>((resolve) => {
+      bleManager.startDeviceScan(null, null, async (error, device) => {
+        if (error) {
+          console.warn('Scan error:', error);
+          bleManager.stopDeviceScan();
           setConnecting(false);
-          reconnectingRef.current = false;
+          return resolve();
         }
-      }
-    });
 
-    // Timeout scan after 10 seconds
-    setTimeout(() => {
-      if (!connectedDevice) {
+        if (device && device.name === TARGET_NAME) {
+          bleManager.stopDeviceScan();
+          clearTimeout(scanTimeout);
+
+          try {
+            const connected = await device.connect();
+            await connected.discoverAllServicesAndCharacteristics();
+            setConnectedDevice(connected);
+            monitorNotifications(connected);
+
+            connected.onDisconnected(() => {
+              ToastAndroid.show('Device disconnected', ToastAndroid.SHORT);
+              disconnect();
+            });
+
+            console.log("Connected!");
+          } catch (e) {
+            console.warn('Connection failed:', e);
+            ToastAndroid.show('Connection failed', ToastAndroid.SHORT);
+          } finally {
+            setConnecting(false);
+            return resolve();
+          }
+        }
+      });
+
+      scanTimeout = setTimeout(() => {
+        console.warn('Scan timeout');
         bleManager.stopDeviceScan();
-        ToastAndroid.show('Scan timeout', ToastAndroid.SHORT);
         setConnecting(false);
-        reconnectingRef.current = false;
-      }
-    }, 10000);
+        return resolve();
+      }, 10000);
+    });
   }
 
   function monitorNotifications(device: Device) {
@@ -184,12 +185,25 @@ export default function App() {
     setValue(null);
 
     setConnecting(true);
-    startScanAndConnect();
+    await startScanAndConnect();
   }
 
   useEffect(() => {
-    startScanAndConnect();
+    let mounted = true;
+
+    async function loopScan() {
+      while (mounted) {
+        if (!connectedDevice) {
+          await startScanAndConnect();
+        }
+        await new Promise((res) => setTimeout(res, 3000));
+      }
+    }
+
+    loopScan();
+
     return () => {
+      mounted = false;
       bleManager.destroy();
       if (connectedDevice) connectedDevice.cancelConnection();
     };
@@ -200,23 +214,23 @@ export default function App() {
       {connecting && (
         <ActivityIndicator size="large" color="#0000ff" style={{ marginBottom: 20 }} />
       )}
-      {!connectedDevice && !connecting ? (
-        <Text style={styles.disconnectedText}>Disconnected. Retrying...</Text>
+      {!connectedDevice ? (
+        <Text>Searching for TRANSMITTER...</Text>
       ) : (
         <>
-          <Text style={styles.connectedText}>Connected to {connectedDevice?.name}</Text>
+          <Text style={styles.connectedText}>Connected to {connectedDevice.name}</Text>
           <View style={styles.dataContainer}>
             <Text style={styles.dataText}>
-              Baseline: {Baseline !== null ? Baseline.toFixed(6) : 'Waiting...'}
+              Baseline: {Baseline !== null ? Baseline.toFixed(6) : '...'}
             </Text>
             <Text style={styles.dataText}>
-              Vref: {Vref !== null ? Vref.toFixed(6) : 'Waiting...'}
+              Vref: {Vref !== null ? Vref.toFixed(6) : '...'}
             </Text>
             <Text style={styles.dataText}>
-              Reading: {Reading !== null ? Reading.toFixed(6) : 'Waiting...'}
+              Reading: {Reading !== null ? Reading.toFixed(6) : '...'}
             </Text>
             <Text style={styles.dataText}>
-              Value: {Value !== null ? Value.toFixed(6) : 'Waiting...'}
+              Value: {Value !== null ? Value.toFixed(6) : '...'}
             </Text>
           </View>
         </>
@@ -228,7 +242,6 @@ export default function App() {
 const styles = StyleSheet.create({
   container: { flex: 1, padding: 20, marginTop: 40 },
   connectedText: { fontSize: 18, fontWeight: 'bold', marginBottom: 10 },
-  disconnectedText: { fontSize: 18, color: 'red', marginBottom: 10 },
   dataContainer: {
     marginTop: 20,
     padding: 15,
