@@ -97,6 +97,7 @@ export default function App() {
 
         if (characteristic?.value) {
           const decoded = Buffer.from(characteristic.value, 'base64').toString('utf-8');
+
           const isValid = /^[BV]-?\d+(\.\d+)?,-?\d+(\.\d+)?$/.test(decoded);
           if (!isValid) {
             console.warn('Invalid format:', decoded);
@@ -108,26 +109,25 @@ export default function App() {
           const firstFloat = parseFloat(firstStr);
           const secondFloat = parseFloat(secondStr);
 
-          if (!isNaN(secondFloat)) {
-            setReading(secondFloat);
-
-            // Only use firstFloat as baseline if it's a B message
-            if (type === 'B' && !isNaN(firstFloat)) {
-              setBaseline(firstFloat);
-              setValue(secondFloat - firstFloat);
-            } else if (Baseline !== null) {
-              // Use last known baseline
-              setValue(secondFloat - Baseline);
-            }
+          if (isNaN(firstFloat) || isNaN(secondFloat)) {
+            console.warn('Invalid numbers:', firstFloat, secondFloat);
+            return;
           }
 
-          if (type === 'V' && !isNaN(firstFloat)) {
+          if (type === 'B') {
+            setBaseline(firstFloat);
+            setReading(secondFloat);
+            setValue(secondFloat - firstFloat);
+          } else if (type === 'V') {
             setVref(firstFloat);
+            setReading(secondFloat);
+            // Do NOT update Value here
           }
         }
       }
     );
   }
+
 
   async function disconnect() {
     if (connectedDevice) {
