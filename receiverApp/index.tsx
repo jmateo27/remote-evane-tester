@@ -108,17 +108,21 @@ export default function App() {
           const firstFloat = parseFloat(firstStr);
           const secondFloat = parseFloat(secondStr);
 
-          if (!isNaN(secondFloat)) setReading(secondFloat);
+          if (!isNaN(secondFloat)) {
+            setReading(secondFloat);
 
-          if (type === 'B' && !isNaN(firstFloat)) {
-            setBaseline(firstFloat);
-          } else if (type === 'V') {
-            setVref(firstFloat);  // doesn't affect value calculation
+            // Only use firstFloat as baseline if it's a B message
+            if (type === 'B' && !isNaN(firstFloat)) {
+              setBaseline(firstFloat);
+              setValue(secondFloat - firstFloat);
+            } else if (Baseline !== null) {
+              // Use last known baseline
+              setValue(secondFloat - Baseline);
+            }
           }
 
-          // Always update Value if both Baseline and new Reading are valid
-          if (!isNaN(secondFloat) && Baseline !== null) {
-            setValue(secondFloat - Baseline);
+          if (type === 'V' && !isNaN(firstFloat)) {
+            setVref(firstFloat);
           }
         }
       }
