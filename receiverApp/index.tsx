@@ -13,9 +13,9 @@ import { BleManager, Device } from 'react-native-ble-plx';
 
 (global as any).Buffer = Buffer;
 
-const SERVICE_UUID = '181A';
+// Full 128-bit version of 0x181A (Environmental Sensing)
+const SERVICE_UUID = '0000181A-0000-1000-8000-00805f9b34fb';
 const CHARACTERISTIC_UUID = '2A6E';
-const TARGET_NAME = 'TRANSMITTER';
 
 export default function App() {
   const bleManager = useRef(new BleManager()).current;
@@ -73,41 +73,33 @@ export default function App() {
     setConnecting(true);
     bleManager.stopDeviceScan();
 
-    bleManager.startDeviceScan(
-      null,
-      { allowDuplicates: false },
-      async (error, device) => {
-        if (error) {
-          console.warn('Scan error:', error);
+    bleManager.startDeviceScan([SERVICE_UUID], null, async (error, device) => {
+      if (error) {
+        console.warn('Scan error:', error);
+        setConnecting(false);
+        return;
+      }
+
+      if (device) {
+        bleManager.stopDeviceScan();
+        try {
+          const connected = await device.connect();
+          await connected.discoverAllServicesAndCharacteristics();
+          setConnectedDevice(connected);
+          monitorNotifications(connected);
+
+          connected.onDisconnected(() => {
+            ToastAndroid.show('Device disconnected', ToastAndroid.SHORT);
+            disconnect();
+          });
+        } catch (e) {
+          console.warn('Connection failed:', e);
+          ToastAndroid.show('Connection failed', ToastAndroid.SHORT);
+        } finally {
           setConnecting(false);
-          return;
-        }
-
-        if (device?.name === TARGET_NAME) {
-          bleManager.stopDeviceScan();
-
-          try {
-            // Ensure clean state before connecting
-            await bleManager.cancelDeviceConnection(device.id);
-
-            const connected = await device.connect();
-            await connected.discoverAllServicesAndCharacteristics();
-            setConnectedDevice(connected);
-            monitorNotifications(connected);
-
-            connected.onDisconnected(() => {
-              ToastAndroid.show('Device disconnected', ToastAndroid.SHORT);
-              disconnect();
-            });
-          } catch (e) {
-            console.warn('Connection failed:', e);
-            ToastAndroid.show('Connection failed', ToastAndroid.SHORT);
-          } finally {
-            setConnecting(false);
-          }
         }
       }
-    );
+    });
   }
 
   function monitorNotifications(device: Device) {
@@ -141,9 +133,7 @@ export default function App() {
           } else if (type === 'V') {
             setVref(firstFloat);
             setReading(secondFloat);
-            if (Baseline !== null) {
-              setValue(secondFloat - Baseline);
-            }
+            setValue(Baseline !== null ? secondFloat - Baseline : null);
           }
         }
       }
@@ -163,8 +153,9 @@ export default function App() {
       setReading(null);
       setValue(null);
     }
-    setConnecting(true);
-    startScanAndConnect();
+    setTimeout(() => {
+      startScanAndConnect();
+    }, 500); // debounce reconnect
   }
 
   useEffect(() => {
@@ -184,14 +175,20 @@ export default function App() {
         <Text>Searching for TRANSMITTER...</Text>
       ) : (
         <>
-          <Text style={styles.connectedText}>Connected to {connectedDevice.name}</Text>
+          <Text style={styles.connectedText}>Connected</Text>
           <View style={styles.dataContainer}>
             <Text style={styles.dataText}>
-              Baseline: {Baseline !== null ? Baseline.toFixed(6) : 'N/A'}
+              Baseline: {Baseline !== null ? Baseline.toFixed(6) : '...'}
             </Text>
-            <Text style={styles.dataText}>Vref: {Vref !== null ? Vref.toFixed(6) : 'N/A'}</Text>
-            <Text style={styles.dataText}>Reading: {Reading !== null ? Reading.toFixed(6) : 'N/A'}</Text>
-            <Text style={styles.dataText}>Value: {Value !== null ? Value.toFixed(6) : 'N/A'}</Text>
+            <Text style={styles.dataText}>
+              Vref: {Vref !== null ? Vref.toFixed(6) : '...'}
+            </Text>
+            <Text style={styles.dataText}>
+              Reading: {Reading !== null ? Reading.toFixed(6) : '...'}
+            </Text>
+            <Text style={styles.dataText}>
+              Value: {Value !== null ? Value.toFixed(6) : '...'}
+            </Text>
           </View>
         </>
       )}
