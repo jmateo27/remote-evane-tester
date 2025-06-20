@@ -64,7 +64,7 @@ class MainBluetoothTransmission:
         self.readings.append(new_reading)
         return sum(self.readings) / len(self.readings)
 
-    async def send_data_task(self, connection, characteristic):
+    async def send_data_task(self, connection, conn_characteristic):
         iter = 0
         while connection.is_connected():
             self.enable.on()
@@ -80,7 +80,7 @@ class MainBluetoothTransmission:
 
             print(f"Sending message: {msg}")
             try:
-                await characteristic.notify(self.encode_message(msg))
+                await conn_characteristic.notify(self.encode_message(msg))
             except Exception as e:
                 print(f"Notify error: {e}")
 
@@ -105,7 +105,11 @@ class MainBluetoothTransmission:
                 appearance=self.BLE_APPEARANCE,
             ) as connection:
                 print(f"Connected to {connection.device}")
-                await self.send_data_task(connection, characteristic)
+
+                # Get the connection-level characteristic object to use notify()
+                async with characteristic.connection(connection) as conn_char:
+                    await self.send_data_task(connection, conn_char)
+
                 print("Disconnected")
 
 async def main():
