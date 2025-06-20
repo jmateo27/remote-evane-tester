@@ -76,11 +76,11 @@ class MainBluetoothTransmission:
                 msg = f"V{self.adcs.measure_vref():.6f},{self.get_smoothed_vane():.6f}"
 
             self.enable.off()
-            iter = (iter + 1) % 2
+            iter = (iter + 1) % 3
 
             print(f"Sending message: {msg}")
             try:
-                await connection.notify(characteristic, self.encode_message(msg))
+                await characteristic.notify(connection, self.encode_message(msg))
             except Exception as e:
                 print(f"Notify error: {e}")
 
