@@ -79,6 +79,13 @@ class MainBluetoothTransmission:
                 print(f"Sending message: {msg}")
                 await characteristic.notify(connection, self.encode_message(msg))
 
+            except TypeError as e:
+                if "'NoneType' object isn't iterable" in str(e):
+                    print("Notify error: Connection closed, ignoring")
+                    break  # Exit loop, connection lost
+                else:
+                    print(f"Notify error: {type(e).__name__}: {e}")
+                    await asyncio.sleep(0.5)
             except Exception as e:
                 print(f"Notify error: {type(e).__name__}: {e}")
                 await asyncio.sleep(0.5)
