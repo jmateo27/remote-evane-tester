@@ -7,7 +7,7 @@ import {
   StyleSheet,
   Text,
   ToastAndroid,
-  View
+  View,
 } from 'react-native';
 import { BleManager, Device } from 'react-native-ble-plx';
 
@@ -19,33 +19,60 @@ const TARGET_NAME = 'TRANSMITTER';
 
 export default function App() {
   const bleManager = useRef(new BleManager()).current;
-  const [connectedDevice, setConnectedDevice] = useState<Device | null>(null);
-  const [connecting, setConnecting] = useState(false);
+
+  // Use ref for baseline to get latest value synchronously inside notification callback
+  const baselineRef = useRef<number | null>(null);
 
   const [Baseline, setBaseline] = useState<number | null>(null);
   const [Vref, setVref] = useState<number | null>(null);
   const [Reading, setReading] = useState<number | null>(null);
   const [Value, setValue] = useState<number | null>(null);
 
+  const [connectedDevice, setConnectedDevice] = useState<Device | null>(null);
+  const [connecting, setConnecting] = useState(false);
+
   async function requestPermissions() {
     if (Platform.OS === 'android') {
       if (Platform.Version < 31) {
         const granted = await PermissionsAndroid.request(
-          PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION
+          PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
+          {
+            title: 'Location Permission Required',
+            message: 'Location permission is needed to scan for BLE devices',
+            buttonPositive: 'OK',
+          }
         );
         if (granted !== PermissionsAndroid.RESULTS.GRANTED) return false;
       } else {
-        const scan = await PermissionsAndroid.request(
-          PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN
+        const grantedScan = await PermissionsAndroid.request(
+          PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN,
+          {
+            title: 'Bluetooth Scan Permission Required',
+            message: 'Bluetooth scan permission is needed to find devices',
+            buttonPositive: 'OK',
+          }
         );
-        const connect = await PermissionsAndroid.request(
-          PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT
+        const grantedConnect = await PermissionsAndroid.request(
+          PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT,
+          {
+            title: 'Bluetooth Connect Permission Required',
+            message: 'Bluetooth connect permission is needed to connect to devices',
+            buttonPositive: 'OK',
+          }
         );
-        if (scan !== PermissionsAndroid.RESULTS.GRANTED || connect !== PermissionsAndroid.RESULTS.GRANTED)
+        if (
+          grantedScan !== PermissionsAndroid.RESULTS.GRANTED ||
+          grantedConnect !== PermissionsAndroid.RESULTS.GRANTED
+        )
           return false;
       }
     }
     return true;
+  }
+
+  function updateBaseline(value: number) {
+    baselineRef.current = value;
+    setBaseline(value);
   }
 
   async function startScanAndConnect() {
@@ -61,7 +88,6 @@ export default function App() {
         setConnecting(false);
         return;
       }
-
       if (device && device.name === TARGET_NAME) {
         bleManager.stopDeviceScan();
         try {
@@ -114,20 +140,21 @@ export default function App() {
             return;
           }
 
+          setReading(secondFloat);
+
           if (type === 'B') {
-            setBaseline(firstFloat);
-            setReading(secondFloat);
-            setValue(secondFloat - firstFloat);
+            updateBaseline(firstFloat);
           } else if (type === 'V') {
             setVref(firstFloat);
-            setReading(secondFloat);
-            // Do NOT update Value here
+          }
+
+          if (baselineRef.current !== null) {
+            setValue(secondFloat - baselineRef.current);
           }
         }
       }
     );
   }
-
 
   async function disconnect() {
     if (connectedDevice) {
@@ -136,14 +163,12 @@ export default function App() {
       } catch (e) {
         console.warn('Disconnect error:', e);
       }
+      setConnectedDevice(null);
+      setBaseline(null);
+      setVref(null);
+      setReading(null);
+      setValue(null);
     }
-
-    setConnectedDevice(null);
-    setVref(null);
-    setReading(null);
-    setValue(null);
-
-    // Do not reset Baseline — we want to preserve the last known good value
     setConnecting(true);
     startScanAndConnect();
   }
@@ -167,10 +192,18 @@ export default function App() {
         <>
           <Text style={styles.connectedText}>Connected to {connectedDevice.name}</Text>
           <View style={styles.dataContainer}>
-            <Text style={styles.dataText}>Baseline: {Baseline?.toFixed(6) ?? '...'}</Text>
-            <Text style={styles.dataText}>Vref: {Vref?.toFixed(6) ?? '...'}</Text>
-            <Text style={styles.dataText}>Reading: {Reading?.toFixed(6) ?? '...'}</Text>
-            <Text style={styles.dataText}>Value: {Value?.toFixed(6) ?? '...'}</Text>
+            <Text style={styles.dataText}>
+              Baseline: {Baseline !== null ? Baseline.toFixed(6) : '...'}
+            </Text>
+            <Text style={styles.dataText}>
+              Vref: {Vref !== null ? Vref.toFixed(6) : '...'}
+            </Text>
+            <Text style={styles.dataText}>
+              Reading: {Reading !== null ? Reading.toFixed(6) : '...'}
+            </Text>
+            <Text style={styles.dataText}>
+              Value: {Value !== null ? Value.toFixed(6) : '...'}
+            </Text>
           </View>
         </>
       )}
