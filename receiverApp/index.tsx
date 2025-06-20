@@ -7,25 +7,29 @@ import {
   StyleSheet,
   Text,
   ToastAndroid,
-  View
+  View,
 } from 'react-native';
 import { BleManager, Device } from 'react-native-ble-plx';
 
 (global as any).Buffer = Buffer;
 
-// Full 128-bit version of 0x181A (Environmental Sensing)
-const SERVICE_UUID = '0000181A-0000-1000-8000-00805f9b34fb';
+const SERVICE_UUID = '181A';
 const CHARACTERISTIC_UUID = '2A6E';
+const TARGET_NAME = 'TRANSMITTER';
 
 export default function App() {
   const bleManager = useRef(new BleManager()).current;
-  const [connectedDevice, setConnectedDevice] = useState<Device | null>(null);
-  const [connecting, setConnecting] = useState(false);
+
+  // Use ref for baseline to get latest value synchronously inside notification callback
+  const baselineRef = useRef<number | null>(null);
 
   const [Baseline, setBaseline] = useState<number | null>(null);
   const [Vref, setVref] = useState<number | null>(null);
   const [Reading, setReading] = useState<number | null>(null);
   const [Value, setValue] = useState<number | null>(null);
+
+  const [connectedDevice, setConnectedDevice] = useState<Device | null>(null);
+  const [connecting, setConnecting] = useState(false);
 
   async function requestPermissions() {
     if (Platform.OS === 'android') {
@@ -66,6 +70,11 @@ export default function App() {
     return true;
   }
 
+  function updateBaseline(value: number) {
+    baselineRef.current = value;
+    setBaseline(value);
+  }
+
   async function startScanAndConnect() {
     const permission = await requestPermissions();
     if (!permission) return;
@@ -73,14 +82,13 @@ export default function App() {
     setConnecting(true);
     bleManager.stopDeviceScan();
 
-    bleManager.startDeviceScan([SERVICE_UUID], null, async (error, device) => {
+    bleManager.startDeviceScan(null, null, async (error, device) => {
       if (error) {
         console.warn('Scan error:', error);
         setConnecting(false);
         return;
       }
-
-      if (device) {
+      if (device && device.name === TARGET_NAME) {
         bleManager.stopDeviceScan();
         try {
           const connected = await device.connect();
@@ -115,6 +123,7 @@ export default function App() {
 
         if (characteristic?.value) {
           const decoded = Buffer.from(characteristic.value, 'base64').toString('utf-8');
+
           const isValid = /^[BV]-?\d+(\.\d+)?,-?\d+(\.\d+)?$/.test(decoded);
           if (!isValid) {
             console.warn('Invalid format:', decoded);
@@ -126,14 +135,21 @@ export default function App() {
           const firstFloat = parseFloat(firstStr);
           const secondFloat = parseFloat(secondStr);
 
+          if (isNaN(firstFloat) || isNaN(secondFloat)) {
+            console.warn('Invalid numbers:', firstFloat, secondFloat);
+            return;
+          }
+
+          setReading(secondFloat);
+
           if (type === 'B') {
-            setBaseline(firstFloat);
-            setReading(secondFloat);
-            setValue(secondFloat - firstFloat);
+            updateBaseline(firstFloat);
           } else if (type === 'V') {
             setVref(firstFloat);
-            setReading(secondFloat);
-            setValue(Baseline !== null ? secondFloat - Baseline : null);
+          }
+
+          if (baselineRef.current !== null) {
+            setValue(secondFloat - baselineRef.current);
           }
         }
       }
@@ -153,9 +169,8 @@ export default function App() {
       setReading(null);
       setValue(null);
     }
-    setTimeout(() => {
-      startScanAndConnect();
-    }, 500); // debounce reconnect
+    setConnecting(true);
+    startScanAndConnect();
   }
 
   useEffect(() => {
@@ -175,7 +190,7 @@ export default function App() {
         <Text>Searching for TRANSMITTER...</Text>
       ) : (
         <>
-          <Text style={styles.connectedText}>Connected</Text>
+          <Text style={styles.connectedText}>Connected to {connectedDevice.name}</Text>
           <View style={styles.dataContainer}>
             <Text style={styles.dataText}>
               Baseline: {Baseline !== null ? Baseline.toFixed(6) : '...'}

@@ -7,7 +7,7 @@ from collections import deque
 
 class EnableInterface:
     ENABLE_PIN = 16
-    ENABLE_RISE_TIME_S = 0.1
+    ENABLE_RISE_TIME_S = 0.05
 
     def __init__(self):
         self.pin = machine.Pin(self.ENABLE_PIN, machine.Pin.OUT, value=0)
@@ -40,16 +40,14 @@ class MainBluetoothTransmission:
     BLE_SVC_UUID = bluetooth.UUID(0x181A)
     BLE_CHARACTERISTIC_UUID = bluetooth.UUID(0x2A6E)
     BLE_APPEARANCE = 0x0300
-    BLE_ADVERTISING_INTERVAL = 2000
-    SEND_LATENCY_S = 0.1
+    BLE_ADVERTISING_INTERVAL = 100
+    SEND_LATENCY_S = 0.05
 
     def __init__(self):
         self.enable = EnableInterface()
         self.adcs = ADCInterface()
-        self.readings = deque([], 10)
+        self.readings = deque([], 3)
 
-        self.enable.off()
-        time.sleep(3)
         self.enable.on()
         time.sleep(self.enable.ENABLE_RISE_TIME_S)
         self.vane_init = self.adcs.measure_vane()
