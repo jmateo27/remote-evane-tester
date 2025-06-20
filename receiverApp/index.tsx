@@ -31,35 +31,17 @@ export default function App() {
     if (Platform.OS === 'android') {
       if (Platform.Version < 31) {
         const granted = await PermissionsAndroid.request(
-          PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
-          {
-            title: 'Location Permission Required',
-            message: 'Location permission is needed to scan for BLE devices',
-            buttonPositive: 'OK',
-          }
+          PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION
         );
         if (granted !== PermissionsAndroid.RESULTS.GRANTED) return false;
       } else {
-        const grantedScan = await PermissionsAndroid.request(
-          PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN,
-          {
-            title: 'Bluetooth Scan Permission Required',
-            message: 'Bluetooth scan permission is needed to find devices',
-            buttonPositive: 'OK',
-          }
+        const scan = await PermissionsAndroid.request(
+          PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN
         );
-        const grantedConnect = await PermissionsAndroid.request(
-          PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT,
-          {
-            title: 'Bluetooth Connect Permission Required',
-            message: 'Bluetooth connect permission is needed to connect to devices',
-            buttonPositive: 'OK',
-          }
+        const connect = await PermissionsAndroid.request(
+          PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT
         );
-        if (
-          grantedScan !== PermissionsAndroid.RESULTS.GRANTED ||
-          grantedConnect !== PermissionsAndroid.RESULTS.GRANTED
-        )
+        if (scan !== PermissionsAndroid.RESULTS.GRANTED || connect !== PermissionsAndroid.RESULTS.GRANTED)
           return false;
       }
     }
@@ -79,6 +61,7 @@ export default function App() {
         setConnecting(false);
         return;
       }
+
       if (device && device.name === TARGET_NAME) {
         bleManager.stopDeviceScan();
         try {
@@ -87,7 +70,6 @@ export default function App() {
           setConnectedDevice(connected);
           monitorNotifications(connected);
 
-          // Disconnect listener: triggers reconnect on disconnect
           connected.onDisconnected(() => {
             ToastAndroid.show('Device disconnected', ToastAndroid.SHORT);
             disconnect();
@@ -120,19 +102,23 @@ export default function App() {
             console.warn('Invalid format:', decoded);
             return;
           }
+
           const type = decoded.charAt(0);
           const [firstStr, secondStr] = decoded.slice(1).split(',');
           const firstFloat = parseFloat(firstStr);
           const secondFloat = parseFloat(secondStr);
 
           if (type === 'B') {
-            setBaseline(firstFloat);
-          }
-          else if (type === 'V') {
+            if (!isNaN(firstFloat)) setBaseline(firstFloat);
+          } else if (type === 'V') {
             setVref(firstFloat);
           }
+
           setReading(secondFloat);
-          setValue(secondFloat - Baseline)
+
+          if (!isNaN(secondFloat) && Baseline !== null) {
+            setValue(secondFloat - Baseline);
+          }
         }
       }
     );
@@ -145,12 +131,14 @@ export default function App() {
       } catch (e) {
         console.warn('Disconnect error:', e);
       }
-      setConnectedDevice(null);
-      setBaseline(null);
-      setVref(null);
-      setReading(null);
-      setValue(null);
     }
+
+    setConnectedDevice(null);
+    setVref(null);
+    setReading(null);
+    setValue(null);
+
+    // Do not reset Baseline — we want to preserve the last known good value
     setConnecting(true);
     startScanAndConnect();
   }
@@ -174,12 +162,10 @@ export default function App() {
         <>
           <Text style={styles.connectedText}>Connected to {connectedDevice.name}</Text>
           <View style={styles.dataContainer}>
-            <Text style={styles.dataText}>
-              Baseline: {Baseline !== null ? Baseline.toFixed(6) : 'N/A'}
-            </Text>
-            <Text style={styles.dataText}>Vref: {Vref !== null ? Vref.toFixed(6) : 'N/A'}</Text>
-            <Text style={styles.dataText}>Reading: {Reading !== null ? Reading.toFixed(6) : 'N/A'}</Text>
-            <Text style={styles.dataText}>Value: {Value !== null ? Value.toFixed(6) : 'N/A'}</Text>
+            <Text style={styles.dataText}>Baseline: {Baseline?.toFixed(6) ?? '...'}</Text>
+            <Text style={styles.dataText}>Vref: {Vref?.toFixed(6) ?? '...'}</Text>
+            <Text style={styles.dataText}>Reading: {Reading?.toFixed(6) ?? '...'}</Text>
+            <Text style={styles.dataText}>Value: {Value?.toFixed(6) ?? '...'}</Text>
           </View>
         </>
       )}

@@ -36,18 +36,18 @@ class ADCInterface:
         return self.vref_adc.read_u16() * self.ADC_MAX_VOLTAGE / self.ADC_MAX_READING
 
 class MainBluetoothTransmission:
-
     BLE_NAME = "TRANSMITTER"
     BLE_SVC_UUID = bluetooth.UUID(0x181A)
     BLE_CHARACTERISTIC_UUID = bluetooth.UUID(0x2A6E)
     BLE_APPEARANCE = 0x0300
-    BLE_ADVERTISING_INTERVAL = 2000  # milliseconds
+    BLE_ADVERTISING_INTERVAL = 2000
     SEND_LATENCY_S = 0.1
 
     def __init__(self):
         self.enable = EnableInterface()
         self.adcs = ADCInterface()
         self.readings = deque([], 10)
+
         self.enable.off()
         time.sleep(3)
         self.enable.on()
@@ -70,19 +70,20 @@ class MainBluetoothTransmission:
             self.enable.on()
             await asyncio.sleep(self.enable.ENABLE_RISE_TIME_S)
 
-            if iter == 0:
-                msg = f"B{self.vane_init:.6f},{self.get_smoothed_vane():.6f}"
-            else:
-                msg = f"V{self.adcs.measure_vref():.6f},{self.get_smoothed_vane():.6f}"
-
-            self.enable.off()
-            iter = (iter + 1) % 3
-
-            print(f"Sending message: {msg}")
             try:
+                if iter == 0:
+                    msg = f"B{self.vane_init:.6f},{self.get_smoothed_vane():.6f}"
+                else:
+                    msg = f"V{self.adcs.measure_vref():.6f},{self.get_smoothed_vane():.6f}"
+                self.enable.off()
+                iter = (iter + 1) % 3
+
+                print(f"Sending message: {msg}")
                 await characteristic.notify(connection, self.encode_message(msg))
+
             except Exception as e:
-                print(f"Notify error: {e}")
+                print(f"Notify error: {type(e).__name__}: {e}")
+                await asyncio.sleep(0.5)
 
             await asyncio.sleep(self.SEND_LATENCY_S)
 
