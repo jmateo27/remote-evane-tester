@@ -2,6 +2,7 @@ import { Buffer } from 'buffer';
 import React, { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
+  Button,
   PermissionsAndroid,
   Platform,
   StyleSheet,
@@ -19,8 +20,8 @@ const TARGET_NAME = 'TRANSMITTER';
 
 export default function App() {
   const bleManager = useRef(new BleManager()).current;
-
   const baselineRef = useRef<number | null>(null);
+
   const [Baseline, setBaseline] = useState<number | null>(null);
   const [Vref, setVref] = useState<number | null>(null);
   const [Reading, setReading] = useState<number | null>(null);
@@ -75,52 +76,54 @@ export default function App() {
 
   async function startScanAndConnect() {
     const permission = await requestPermissions();
-    if (!permission) return;
+    if (!permission) {
+      setConnecting(false);
+      return;
+    }
 
     setConnecting(true);
-    let scanTimeout: NodeJS.Timeout;
 
     return new Promise<void>((resolve) => {
+      let timeout = setTimeout(() => {
+        bleManager.stopDeviceScan();
+        console.warn('Scan timed out');
+        setConnecting(false);
+        resolve();
+      }, 10000); // 10 seconds timeout
+
       bleManager.startDeviceScan(null, null, async (error, device) => {
         if (error) {
           console.warn('Scan error:', error);
           bleManager.stopDeviceScan();
           setConnecting(false);
+          clearTimeout(timeout);
           return resolve();
         }
 
         if (device && device.name === TARGET_NAME) {
           bleManager.stopDeviceScan();
-          clearTimeout(scanTimeout);
+          clearTimeout(timeout);
 
           try {
             const connected = await device.connect();
             await connected.discoverAllServicesAndCharacteristics();
             setConnectedDevice(connected);
+            setConnecting(false);
             monitorNotifications(connected);
 
             connected.onDisconnected(() => {
               ToastAndroid.show('Device disconnected', ToastAndroid.SHORT);
-              disconnect();
+              disconnect(); // triggers UI reset, user can manually reconnect
             });
-
-            console.log("Connected!");
           } catch (e) {
             console.warn('Connection failed:', e);
             ToastAndroid.show('Connection failed', ToastAndroid.SHORT);
-          } finally {
             setConnecting(false);
-            return resolve();
           }
+
+          resolve();
         }
       });
-
-      scanTimeout = setTimeout(() => {
-        console.warn('Scan timeout');
-        bleManager.stopDeviceScan();
-        setConnecting(false);
-        return resolve();
-      }, 10000);
     });
   }
 
@@ -183,29 +186,13 @@ export default function App() {
     setVref(null);
     setReading(null);
     setValue(null);
-
-    setConnecting(true);
-    await startScanAndConnect();
+    setConnecting(false); // Show Reconnect button
   }
 
   useEffect(() => {
-    let mounted = true;
-
-    async function loopScan() {
-      while (mounted) {
-        if (!connectedDevice) {
-          await startScanAndConnect();
-        }
-        await new Promise((res) => setTimeout(res, 3000));
-      }
-    }
-
-    loopScan();
-
+    startScanAndConnect();
     return () => {
-      mounted = false;
       bleManager.destroy();
-      if (connectedDevice) connectedDevice.cancelConnection();
     };
   }, []);
 
@@ -215,7 +202,12 @@ export default function App() {
         <ActivityIndicator size="large" color="#0000ff" style={{ marginBottom: 20 }} />
       )}
       {!connectedDevice ? (
-        <Text>Searching for TRANSMITTER...</Text>
+        <>
+          <Text>Searching for TRANSMITTER...</Text>
+          {!connecting && (
+            <Button title="Reconnect" onPress={startScanAndConnect} />
+          )}
+        </>
       ) : (
         <>
           <Text style={styles.connectedText}>Connected to {connectedDevice.name}</Text>
