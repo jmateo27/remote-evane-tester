@@ -47,7 +47,7 @@ class MainBluetoothTransmission:
     def __init__(self):
         self.enable = EnableInterface()
         self.adcs = ADCInterface()
-        self.readings = deque(maxlen=10)
+        self.readings = deque([], 10)
         self.enable.off()
         time.sleep(3)
         self.enable.on()
@@ -64,7 +64,7 @@ class MainBluetoothTransmission:
         self.readings.append(new_reading)
         return sum(self.readings) / len(self.readings)
 
-    async def send_data_task(self, connection, conn_characteristic):
+    async def send_data_task(self, connection, characteristic):
         iter = 0
         while connection.is_connected():
             self.enable.on()
@@ -80,7 +80,7 @@ class MainBluetoothTransmission:
 
             print(f"Sending message: {msg}")
             try:
-                await conn_characteristic.notify(self.encode_message(msg))
+                await connection.notify(characteristic, self.encode_message(msg))
             except Exception as e:
                 print(f"Notify error: {e}")
 
@@ -105,11 +105,7 @@ class MainBluetoothTransmission:
                 appearance=self.BLE_APPEARANCE,
             ) as connection:
                 print(f"Connected to {connection.device}")
-
-                # Get the connection-level characteristic object to use notify()
-                async with characteristic.connection(connection) as conn_char:
-                    await self.send_data_task(connection, conn_char)
-
+                await self.send_data_task(connection, characteristic)
                 print("Disconnected")
 
 async def main():
