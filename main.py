@@ -3,6 +3,7 @@ import time
 import aioble
 import bluetooth
 import asyncio
+from collections import deque
 
 class EnableInterface:
     ENABLE_PIN = 16
@@ -41,47 +42,47 @@ class MainBluetoothTransmission:
     BLE_CHARACTERISTIC_UUID = bluetooth.UUID(0x2A6E)
     BLE_APPEARANCE = 0x0300
     BLE_ADVERTISING_INTERVAL = 2000  # milliseconds
-    SEND_LATENCY_S = 0.4
+    SEND_LATENCY_S = 0.1
 
     def __init__(self):
         self.enable = EnableInterface()
         self.adcs = ADCInterface()
+        self.readings = deque(maxlen=10)
         self.enable.off()
         time.sleep(3)
         self.enable.on()
         time.sleep(self.enable.ENABLE_RISE_TIME_S)
         self.vane_init = self.adcs.measure_vane()
-        self.vref_init = self.adcs.measure_vref()
+        self.readings.append(self.vane_init)
         self.enable.off()
 
     def encode_message(self, message: str) -> bytes:
         return message.encode('utf-8')
 
+    def get_smoothed_vane(self):
+        new_reading = self.adcs.measure_vane()
+        self.readings.append(new_reading)
+        return sum(self.readings) / len(self.readings)
+
     async def send_data_task(self, connection, characteristic):
         iter = 0
-        while True:
-            if not connection or not characteristic:
-                print("No connection or characteristic")
-                await asyncio.sleep(self.SEND_LATENCY_S)
-                continue
-
+        while connection.is_connected():
             self.enable.on()
             await asyncio.sleep(self.enable.ENABLE_RISE_TIME_S)
 
             if iter == 0:
-                msg = f"B{self.vane_init:.6f},{self.adcs.measure_vane():.6f}"
+                msg = f"B{self.vane_init:.6f},{self.get_smoothed_vane():.6f}"
             else:
-                msg = f"V{self.adcs.measure_vref():.6f},{self.adcs.measure_vane():.6f}"
+                msg = f"V{self.adcs.measure_vref():.6f},{self.get_smoothed_vane():.6f}"
 
             self.enable.off()
             iter = (iter + 1) % 2
 
             print(f"Sending message: {msg}")
-
             try:
-                characteristic.write(self.encode_message(msg))
+                await characteristic.notify(self.encode_message(msg))
             except Exception as e:
-                print(f"Write error: {e}")
+                print(f"Notify error: {e}")
 
             await asyncio.sleep(self.SEND_LATENCY_S)
 
@@ -90,10 +91,7 @@ class MainBluetoothTransmission:
         characteristic = aioble.Characteristic(
             ble_service,
             self.BLE_CHARACTERISTIC_UUID,
-            read=True,
-            notify=True,
-            write=True,
-            capture=True,
+            notify=True
         )
         aioble.register_services(ble_service)
 

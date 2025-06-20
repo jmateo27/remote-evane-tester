@@ -20,11 +20,15 @@
       "permissions": [
         "android.permission.BLUETOOTH",
         "android.permission.BLUETOOTH_ADMIN",
-        "android.permission.BLUETOOTH_CONNECT",
-        "android.permission.BLUETOOTH_SCAN",
         "android.permission.ACCESS_FINE_LOCATION"
       ],
-      "package": "com.anonymous.mybleapp"
+      "package": "com.anonymous.mybleapp",
+      "features": [
+        {
+          "android:name": "android.hardware.bluetooth_le",
+          "android:required": true
+        }
+      ]
     },
     "web": {
       "bundler": "metro",
@@ -43,18 +47,7 @@
         }
       ],
       "react-native-ble-plx",
-      [
-        "react-native-permissions",
-        {
-          "android": {
-          "permissions": [
-            "android.permission.BLUETOOTH",
-            "android.permission.BLUETOOTH_ADMIN",
-            "android.permission.ACCESS_FINE_LOCATION"
-          ]
-        }
-        }
-      ]
+      "react-native-permissions"
     ],
     "experiments": {
       "typedRoutes": true

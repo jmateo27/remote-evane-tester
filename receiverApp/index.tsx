@@ -2,14 +2,13 @@ import { Buffer } from 'buffer';
 import React, { useEffect, useRef, useState } from 'react';
 import {
   Alert,
-  Button,
-  FlatList,
   PermissionsAndroid,
   Platform,
   StyleSheet,
   Text,
-  TouchableOpacity,
   View,
+  ActivityIndicator,
+  ToastAndroid,
 } from 'react-native';
 import { BleManager, Device } from 'react-native-ble-plx';
 
@@ -21,17 +20,13 @@ const TARGET_NAME = 'TRANSMITTER';
 
 export default function App() {
   const bleManager = useRef(new BleManager()).current;
-  const [scanning, setScanning] = useState(false);
-  const [devices, setDevices] = useState<Device[]>([]);
   const [connectedDevice, setConnectedDevice] = useState<Device | null>(null);
+  const [connecting, setConnecting] = useState(false);
 
-  // Variables requested
   const [Baseline, setBaseline] = useState<number | null>(null);
   const [Vref, setVref] = useState<number | null>(null);
   const [Reading, setReading] = useState<number | null>(null);
   const [Value, setValue] = useState<number | null>(null);
-
-  const readInterval = useRef<NodeJS.Timeout | null>(null);
 
   async function requestPermissions() {
     if (Platform.OS === 'android') {
@@ -44,10 +39,7 @@ export default function App() {
             buttonPositive: 'OK',
           }
         );
-        if (granted !== PermissionsAndroid.RESULTS.GRANTED) {
-          Alert.alert('Permission Denied', 'Cannot scan without location permission');
-          return false;
-        }
+        if (granted !== PermissionsAndroid.RESULTS.GRANTED) return false;
       } else {
         const grantedScan = await PermissionsAndroid.request(
           PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN,
@@ -68,108 +60,79 @@ export default function App() {
         if (
           grantedScan !== PermissionsAndroid.RESULTS.GRANTED ||
           grantedConnect !== PermissionsAndroid.RESULTS.GRANTED
-        ) {
-          Alert.alert('Permission Denied', 'Cannot scan/connect without Bluetooth permissions');
-          return false;
-        }
+        ) return false;
       }
     }
     return true;
   }
 
-  async function startScan() {
+  async function startScanAndConnect() {
     const permission = await requestPermissions();
     if (!permission) return;
 
-    setDevices([]);
-    setScanning(true);
-
-    bleManager.startDeviceScan(null, null, (error, device) => {
+    setConnecting(true);
+    bleManager.startDeviceScan(null, null, async (error, device) => {
       if (error) {
         console.warn('Scan error:', error);
-        setScanning(false);
+        setConnecting(false);
         return;
       }
       if (device && device.name === TARGET_NAME) {
-        setDevices((prev) => {
-          if (prev.find((d) => d.id === device.id)) return prev;
-          return [...prev, device];
-        });
+        bleManager.stopDeviceScan();
+        try {
+          const connected = await device.connect();
+          await connected.discoverAllServicesAndCharacteristics();
+          setConnectedDevice(connected);
+          monitorNotifications(connected);
+          connected.onDisconnected(() => {
+            ToastAndroid.show('Device disconnected', ToastAndroid.SHORT);
+            disconnect();
+          });
+        } catch (e) {
+          console.warn('Connection failed:', e);
+          ToastAndroid.show('Connection failed', ToastAndroid.SHORT);
+        } finally {
+          setConnecting(false);
+        }
       }
     });
-
-    setTimeout(() => {
-      bleManager.stopDeviceScan();
-      setScanning(false);
-    }, 10000);
   }
 
-  async function connectToDevice(device: Device) {
-    try {
-      bleManager.stopDeviceScan();
-      setScanning(false);
-
-      const connected = await device.connect();
-      await connected.discoverAllServicesAndCharacteristics();
-
-      setConnectedDevice(connected);
-      Alert.alert('Connected', `Connected to ${device.name}`);
-
-      // Poll characteristic every 200ms
-      readInterval.current = setInterval(async () => {
-        try {
-          const characteristic = await connected.readCharacteristicForService(
-            SERVICE_UUID,
-            CHARACTERISTIC_UUID
-          );
-          if (characteristic?.value) {
-            const decoded = Buffer.from(characteristic.value, 'base64').toString('utf-8');
-            // Parse message here:
-            // Format: B<float>,<float> or V<float>,<float>
-            // Example: B0.650332,0.657583
-            const type = decoded.charAt(0);
-            const rest = decoded.substring(1);
-            const parts = rest.split(',');
-
-            if (parts.length === 2) {
-              const firstFloat = parseFloat(parts[0]);
-              const secondFloat = parseFloat(parts[1]);
-
-              if (type === 'B') {
-                setBaseline(firstFloat);
-              } else if (type === 'V') {
-                setVref(firstFloat);
-              }
-              setReading(secondFloat);
-
-              // Value = Reading - Baseline (only if Baseline is defined)
-              setValue((prev) => {
-                if (type === 'B') {
-                  // When baseline updates, recalc value if Reading exists
-                  return secondFloat !== null && !isNaN(secondFloat) ? secondFloat - firstFloat : null;
-                } else {
-                  return (secondFloat !== null && !isNaN(secondFloat) && Baseline !== null) ? secondFloat - Baseline : prev;
-                }
-              });
-            }
-          }
-        } catch (e) {
-          console.warn('Read error:', e);
+  function monitorNotifications(device: Device) {
+    device.monitorCharacteristicForService(
+      SERVICE_UUID,
+      CHARACTERISTIC_UUID,
+      (error, characteristic) => {
+        if (error) {
+          console.warn('Notification error:', error);
+          disconnect();
+          return;
         }
-      }, 200);
-    } catch (error) {
-      console.warn('Connection error:', error);
-      Alert.alert('Connection failed', 'Failed to connect to device');
-    }
+
+        if (characteristic?.value) {
+          const decoded = Buffer.from(characteristic.value, 'base64').toString('utf-8');
+          const isValid = /^[BV]-?\d+(\.\d+)?,-?\d+(\.\d+)?$/.test(decoded);
+          if (!isValid) {
+            console.warn('Invalid format:', decoded);
+            return;
+          }
+          const type = decoded.charAt(0);
+          const [firstStr, secondStr] = decoded.slice(1).split(',');
+          const firstFloat = parseFloat(firstStr);
+          const secondFloat = parseFloat(secondStr);
+
+          if (type === 'B') setBaseline(firstFloat);
+          else if (type === 'V') setVref(firstFloat);
+          setReading(secondFloat);
+          setValue(type === 'B' ? secondFloat - firstFloat : (Baseline !== null ? secondFloat - Baseline : null));
+        }
+      }
+    );
   }
 
   async function disconnect() {
     if (connectedDevice) {
       try {
-        if (readInterval.current) {
-          clearInterval(readInterval.current);
-          readInterval.current = null;
-        }
         await connectedDevice.cancelConnection();
       } catch (e) {
         console.warn('Disconnect error:', e);
@@ -183,40 +146,21 @@ export default function App() {
   }
 
   useEffect(() => {
+    startScanAndConnect();
     return () => {
       bleManager.destroy();
-      if (readInterval.current) {
-        clearInterval(readInterval.current);
-      }
+      if (connectedDevice) connectedDevice.cancelConnection();
     };
   }, []);
 
   return (
     <View style={styles.container}>
+      {connecting && <ActivityIndicator size="large" color="#0000ff" style={{ marginBottom: 20 }} />}
       {!connectedDevice ? (
-        <>
-          <Button
-            title={scanning ? 'Scanning...' : 'Scan for Transmitter'}
-            onPress={startScan}
-            disabled={scanning}
-          />
-          <FlatList
-            data={devices}
-            keyExtractor={(item) => item.id}
-            renderItem={({ item }) => (
-              <TouchableOpacity style={styles.deviceItem} onPress={() => connectToDevice(item)}>
-                <Text style={styles.deviceName}>{item.name}</Text>
-                <Text style={styles.deviceId}>{item.id}</Text>
-              </TouchableOpacity>
-            )}
-            ListEmptyComponent={<Text style={{ marginTop: 20 }}>No devices found yet.</Text>}
-          />
-        </>
+        <Text>Searching for TRANSMITTER...</Text>
       ) : (
         <>
           <Text style={styles.connectedText}>Connected to {connectedDevice.name}</Text>
-          <Button title="Disconnect" onPress={disconnect} />
-
           <View style={styles.dataContainer}>
             <Text style={styles.dataText}>Baseline: {Baseline !== null ? Baseline.toFixed(6) : 'N/A'}</Text>
             <Text style={styles.dataText}>Vref: {Vref !== null ? Vref.toFixed(6) : 'N/A'}</Text>
@@ -231,9 +175,6 @@ export default function App() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, padding: 20, marginTop: 40 },
-  deviceItem: { padding: 15, borderBottomWidth: 1, borderColor: '#ccc' },
-  deviceName: { fontSize: 16, fontWeight: 'bold' },
-  deviceId: { fontSize: 12, color: '#666' },
   connectedText: { fontSize: 18, fontWeight: 'bold', marginBottom: 10 },
   dataContainer: {
     marginTop: 20,
