@@ -60,7 +60,8 @@ export default function App() {
         if (
           grantedScan !== PermissionsAndroid.RESULTS.GRANTED ||
           grantedConnect !== PermissionsAndroid.RESULTS.GRANTED
-        ) return false;
+        )
+          return false;
       }
     }
     return true;
@@ -71,6 +72,8 @@ export default function App() {
     if (!permission) return;
 
     setConnecting(true);
+    bleManager.stopDeviceScan();
+
     bleManager.startDeviceScan(null, null, async (error, device) => {
       if (error) {
         console.warn('Scan error:', error);
@@ -84,6 +87,8 @@ export default function App() {
           await connected.discoverAllServicesAndCharacteristics();
           setConnectedDevice(connected);
           monitorNotifications(connected);
+
+          // Disconnect listener: triggers reconnect on disconnect
           connected.onDisconnected(() => {
             ToastAndroid.show('Device disconnected', ToastAndroid.SHORT);
             disconnect();
@@ -124,7 +129,9 @@ export default function App() {
           if (type === 'B') setBaseline(firstFloat);
           else if (type === 'V') setVref(firstFloat);
           setReading(secondFloat);
-          setValue(type === 'B' ? secondFloat - firstFloat : (Baseline !== null ? secondFloat - Baseline : null));
+          setValue(
+            type === 'B' ? secondFloat - firstFloat : Baseline !== null ? secondFloat - Baseline : null
+          );
         }
       }
     );
@@ -143,6 +150,8 @@ export default function App() {
       setReading(null);
       setValue(null);
     }
+    setConnecting(true);
+    startScanAndConnect();
   }
 
   useEffect(() => {
@@ -155,14 +164,18 @@ export default function App() {
 
   return (
     <View style={styles.container}>
-      {connecting && <ActivityIndicator size="large" color="#0000ff" style={{ marginBottom: 20 }} />}
+      {connecting && (
+        <ActivityIndicator size="large" color="#0000ff" style={{ marginBottom: 20 }} />
+      )}
       {!connectedDevice ? (
         <Text>Searching for TRANSMITTER...</Text>
       ) : (
         <>
           <Text style={styles.connectedText}>Connected to {connectedDevice.name}</Text>
           <View style={styles.dataContainer}>
-            <Text style={styles.dataText}>Baseline: {Baseline !== null ? Baseline.toFixed(6) : 'N/A'}</Text>
+            <Text style={styles.dataText}>
+              Baseline: {Baseline !== null ? Baseline.toFixed(6) : 'N/A'}
+            </Text>
             <Text style={styles.dataText}>Vref: {Vref !== null ? Vref.toFixed(6) : 'N/A'}</Text>
             <Text style={styles.dataText}>Reading: {Reading !== null ? Reading.toFixed(6) : 'N/A'}</Text>
             <Text style={styles.dataText}>Value: {Value !== null ? Value.toFixed(6) : 'N/A'}</Text>
