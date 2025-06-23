@@ -43,6 +43,9 @@ class MainBluetoothTransmission:
     BLE_ADVERTISING_INTERVAL = 100
     SEND_LATENCY_MS = 250
 
+    SWITCH_PIN = 17
+    DEBOUNCE_TIME_MS = 2000
+
     def __init__(self):
         self.enable = EnableInterface()
         self.adcs = ADCInterface()
@@ -55,6 +58,10 @@ class MainBluetoothTransmission:
         self.readings.append(self.vane_init)
         self.enable.off()
 
+        self.switch_pin = machine.Pin(self.SWITCH_PIN, machine.Pin.IN, machine.Pin.PULL_UP)
+        self.switch_pin.irq(trigger=machine.Pin.IRQ_RISING, handler = self.switch_handler)
+        self.switch_time_prev = -1
+
     def encode_message(self, message: str) -> bytes:
         return message.encode('utf-8')
 
@@ -62,6 +69,16 @@ class MainBluetoothTransmission:
         new_reading = self.adcs.measure_vane()
         self.readings.append(new_reading)
         return sum(self.readings) / len(self.readings)
+    
+    def switch_handler(self):
+        if (time.ticks_ms() - self.switch_time_prev > self.DEBOUNCE_TIME_MS):
+            if self.switch_pin.value() == 0:
+                self.enable.on()
+                time.sleep(self.enable.ENABLE_RISE_TIME_S)
+                self.vane_init = self.adcs.measure_vane()
+                self.enable.off()
+                time.sleep(self.enable.ENABLE_RISE_TIME_S)
+                print("Baseline re-evaluated")
 
     async def send_data_task(self, connection, characteristic):
         msg_iter = 0
