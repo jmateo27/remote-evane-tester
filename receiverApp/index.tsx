@@ -29,6 +29,13 @@ export default function App() {
 
   const [connectedDevice, setConnectedDevice] = useState<Device | null>(null);
   const [connecting, setConnecting] = useState(false);
+  const [scanTime, setScanTime] = useState<number>(0);
+  const scanTimerRef = useRef<NodeJS.Timer | null>(null);
+
+  function updateBaseline(value: number) {
+    baselineRef.current = value;
+    setBaseline(value);
+  }
 
   async function requestPermissions() {
     if (Platform.OS === 'android') {
@@ -41,7 +48,7 @@ export default function App() {
             buttonPositive: 'OK',
           }
         );
-        if (granted !== PermissionsAndroid.RESULTS.GRANTED) return false;
+        return granted === PermissionsAndroid.RESULTS.GRANTED;
       } else {
         const grantedScan = await PermissionsAndroid.request(
           PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN,
@@ -59,19 +66,13 @@ export default function App() {
             buttonPositive: 'OK',
           }
         );
-        if (
-          grantedScan !== PermissionsAndroid.RESULTS.GRANTED ||
-          grantedConnect !== PermissionsAndroid.RESULTS.GRANTED
-        )
-          return false;
+        return (
+          grantedScan === PermissionsAndroid.RESULTS.GRANTED &&
+          grantedConnect === PermissionsAndroid.RESULTS.GRANTED
+        );
       }
     }
     return true;
-  }
-
-  function updateBaseline(value: number) {
-    baselineRef.current = value;
-    setBaseline(value);
   }
 
   async function startScanAndConnect() {
@@ -81,49 +82,44 @@ export default function App() {
       return;
     }
 
+    setScanTime(0);
     setConnecting(true);
 
-    return new Promise<void>((resolve) => {
-      let timeout = setTimeout(() => {
+    if (scanTimerRef.current) clearInterval(scanTimerRef.current);
+    scanTimerRef.current = setInterval(() => {
+      setScanTime((prev) => prev + 1);
+    }, 1000);
+
+    bleManager.startDeviceScan(null, null, async (error, device) => {
+      if (error) {
+        console.warn('Scan error:', error);
         bleManager.stopDeviceScan();
-        console.warn('Scan timed out');
         setConnecting(false);
-        resolve();
-      }, 10000); // 10 seconds timeout
+        clearInterval(scanTimerRef.current!);
+        return;
+      }
 
-      bleManager.startDeviceScan(null, null, async (error, device) => {
-        if (error) {
-          console.warn('Scan error:', error);
-          bleManager.stopDeviceScan();
-          setConnecting(false);
-          clearTimeout(timeout);
-          return resolve();
+      if (device?.name === TARGET_NAME) {
+        bleManager.stopDeviceScan();
+        clearInterval(scanTimerRef.current!);
+
+        try {
+          const connected = await device.connect();
+          await connected.discoverAllServicesAndCharacteristics();
+          setConnectedDevice(connected);
+          monitorNotifications(connected);
+
+          connected.onDisconnected(() => {
+            ToastAndroid.show('Device disconnected', ToastAndroid.SHORT);
+            disconnect();
+          });
+        } catch (e) {
+          console.warn('Connection failed:', e);
+          ToastAndroid.show('Connection failed', ToastAndroid.SHORT);
         }
 
-        if (device && device.name === TARGET_NAME) {
-          bleManager.stopDeviceScan();
-          clearTimeout(timeout);
-
-          try {
-            const connected = await device.connect();
-            await connected.discoverAllServicesAndCharacteristics();
-            setConnectedDevice(connected);
-            setConnecting(false);
-            monitorNotifications(connected);
-
-            connected.onDisconnected(() => {
-              ToastAndroid.show('Device disconnected', ToastAndroid.SHORT);
-              disconnect(); // triggers UI reset, user can manually reconnect
-            });
-          } catch (e) {
-            console.warn('Connection failed:', e);
-            ToastAndroid.show('Connection failed', ToastAndroid.SHORT);
-            setConnecting(false);
-          }
-
-          resolve();
-        }
-      });
+        setConnecting(false);
+      }
     });
   }
 
@@ -141,20 +137,14 @@ export default function App() {
         if (characteristic?.value) {
           const decoded = Buffer.from(characteristic.value, 'base64').toString('utf-8');
           const isValid = /^[BV]-?\d+(\.\d+)?,-?\d+(\.\d+)?$/.test(decoded);
-          if (!isValid) {
-            console.warn('Invalid format:', decoded);
-            return;
-          }
+          if (!isValid) return;
 
           const type = decoded.charAt(0);
           const [firstStr, secondStr] = decoded.slice(1).split(',');
           const firstFloat = parseFloat(firstStr);
           const secondFloat = parseFloat(secondStr);
 
-          if (isNaN(firstFloat) || isNaN(secondFloat)) {
-            console.warn('Invalid numbers:', firstFloat, secondFloat);
-            return;
-          }
+          if (isNaN(firstFloat) || isNaN(secondFloat)) return;
 
           setReading(secondFloat);
 
@@ -180,35 +170,40 @@ export default function App() {
         console.warn('Disconnect error:', e);
       }
     }
-
     setConnectedDevice(null);
     setBaseline(null);
     setVref(null);
     setReading(null);
     setValue(null);
-    setConnecting(false); // Show Reconnect button
+    setConnecting(false);
+    clearInterval(scanTimerRef.current!);
   }
 
   useEffect(() => {
-    startScanAndConnect();
     return () => {
       bleManager.destroy();
+      if (scanTimerRef.current) clearInterval(scanTimerRef.current);
     };
   }, []);
 
   return (
     <View style={styles.container}>
       {connecting && (
-        <ActivityIndicator size="large" color="#0000ff" style={{ marginBottom: 20 }} />
-      )}
-      {!connectedDevice ? (
         <>
-          <Text>Searching for TRANSMITTER...</Text>
-          {!connecting && (
-            <Button title="Reconnect" onPress={startScanAndConnect} />
-          )}
+          <ActivityIndicator size="large" color="#0000ff" style={{ marginBottom: 10 }} />
+          <Text>Scanning... {scanTime}s</Text>
+          <Button title="Retry" onPress={startScanAndConnect} />
         </>
-      ) : (
+      )}
+
+      {!connecting && !connectedDevice && (
+        <>
+          <Text>Not connected</Text>
+          <Button title="Connect" onPress={startScanAndConnect} />
+        </>
+      )}
+
+      {connectedDevice && (
         <>
           <Text style={styles.connectedText}>Connected to {connectedDevice.name}</Text>
           <View style={styles.dataContainer}>
