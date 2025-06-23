@@ -7,7 +7,7 @@ from collections import deque
 
 class EnableInterface:
     ENABLE_PIN = 16
-    ENABLE_RISE_TIME_S = 0.05
+    ENABLE_RISE_TIME_S = 0.005
 
     def __init__(self):
         self.pin = machine.Pin(self.ENABLE_PIN, machine.Pin.OUT, value=0)
@@ -41,12 +41,12 @@ class MainBluetoothTransmission:
     BLE_CHARACTERISTIC_UUID = bluetooth.UUID(0x2A6E)
     BLE_APPEARANCE = 0x0300
     BLE_ADVERTISING_INTERVAL = 100
-    SEND_LATENCY_S = 0.05
+    SEND_LATENCY_MS = 250
 
     def __init__(self):
         self.enable = EnableInterface()
         self.adcs = ADCInterface()
-        self.DEQUE_SIZE = 4
+        self.DEQUE_SIZE = 20
         self.readings = deque([], self.DEQUE_SIZE)
 
         self.enable.on()
@@ -67,6 +67,7 @@ class MainBluetoothTransmission:
         msg_iter = 0
         send_iter = 0
         while connection.is_connected():
+            start_time = time.ticks_ms()
             self.enable.on()
             await asyncio.sleep(self.enable.ENABLE_RISE_TIME_S)
 
@@ -81,23 +82,26 @@ class MainBluetoothTransmission:
                 else:
                     msg = f"V{self.adcs.measure_vref():.6f},{smoothed_reading:.6f}"
                 
+                self.enable.off()
+                await asyncio.sleep(self.enable.ENABLE_RISE_TIME_S)
                 msg_iter = (msg_iter + 1) % 3
 
-                print(f"Sending message: {msg}")
+#                 print(f"Sending message: {msg}")
                 await characteristic.notify(connection, self.encode_message(msg))
     
             except TypeError as e:
                 if "'NoneType' object isn't iterable" in str(e):
-                    await asyncio.sleep(0.5)
+                      elapsed = time.ticks_ms() - start_time
+                      await asyncio.sleep_ms(int(self.SEND_LATENCY_MS / self.DEQUE_SIZE - elapsed))
+                      print(f"Loop took {elapsed} ms, max is {self.SEND_LATENCY_MS / self.DEQUE_SIZE}")
+                      continue
                 else:
                     print(f"Notify error: {type(e).__name__}: {e}")
-                    await asyncio.sleep(0.5)
             except Exception as e:
                 print(f"Notify error: {type(e).__name__}: {e}")
-                await asyncio.sleep(0.5)
                 
             self.enable.off()
-            await asyncio.sleep(self.SEND_LATENCY_S / self.DEQUE_SIZE)
+            await asyncio.sleep(self.enable.ENABLE_RISE_TIME_S)
 
     async def run_transmitter_mode(self):
         ble_service = aioble.Service(self.BLE_SVC_UUID)
