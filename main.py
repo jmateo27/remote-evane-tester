@@ -46,7 +46,8 @@ class MainBluetoothTransmission:
     def __init__(self):
         self.enable = EnableInterface()
         self.adcs = ADCInterface()
-        self.readings = deque([], 3)
+        self.DEQUE_SIZE = 4
+        self.readings = deque([], self.DEQUE_SIZE)
 
         self.enable.on()
         time.sleep(self.enable.ENABLE_RISE_TIME_S)
@@ -63,22 +64,28 @@ class MainBluetoothTransmission:
         return sum(self.readings) / len(self.readings)
 
     async def send_data_task(self, connection, characteristic):
-        iter = 0
+        msg_iter = 0
+        send_iter = 0
         while connection.is_connected():
             self.enable.on()
             await asyncio.sleep(self.enable.ENABLE_RISE_TIME_S)
 
             try:
-                if iter == 0:
+                smoothed_reading = self.get_smoothed_vane()
+                send_iter = (send_iter + 1) % self.DEQUE_SIZE
+                if send_iter > 0:
+                    continue
+                
+                if msg_iter == 0:
                     msg = f"B{self.vane_init:.6f},{self.get_smoothed_vane():.6f}"
                 else:
-                    msg = f"V{self.adcs.measure_vref():.6f},{self.get_smoothed_vane():.6f}"
-                self.enable.off()
-                iter = (iter + 1) % 3
+                    msg = f"V{self.adcs.measure_vref():.6f},{smoothed_reading:.6f}"
+                
+                msg_iter = (msg_iter + 1) % 3
 
                 print(f"Sending message: {msg}")
                 await characteristic.notify(connection, self.encode_message(msg))
-
+    
             except TypeError as e:
                 if "'NoneType' object isn't iterable" in str(e):
                     await asyncio.sleep(0.5)
@@ -88,8 +95,9 @@ class MainBluetoothTransmission:
             except Exception as e:
                 print(f"Notify error: {type(e).__name__}: {e}")
                 await asyncio.sleep(0.5)
-
-            await asyncio.sleep(self.SEND_LATENCY_S)
+                
+            self.enable.off()
+            await asyncio.sleep(self.SEND_LATENCY_S / self.DEQUE_SIZE)
 
     async def run_transmitter_mode(self):
         ble_service = aioble.Service(self.BLE_SVC_UUID)
