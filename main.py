@@ -70,8 +70,9 @@ class MainBluetoothTransmission:
         self.readings.append(new_reading)
         return sum(self.readings) / len(self.readings)
     
-    def switch_handler(self):
-        if (time.ticks_ms() - self.switch_time_prev > self.DEBOUNCE_TIME_MS):
+    def switch_handler(self, pin):
+        if time.ticks_ms() - self.switch_time_prev > self.DEBOUNCE_TIME_MS:
+            self.switch_time_prev = time.ticks_ms()
             if self.switch_pin.value() == 0:
                 self.enable.on()
                 time.sleep(self.enable.ENABLE_RISE_TIME_S)
