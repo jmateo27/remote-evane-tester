@@ -27,7 +27,6 @@ export default function App() {
   const bleManager = useRef(new BleManager()).current;
   const baselineRef = useRef<number | null>(null);
   const scanTimerRef = useRef<NodeJS.Timer | null>(null);
-  const scanStartTimeRef = useRef<number | null>(null);
 
   // Latest state refs
   const baselineStateRef = useRef<number | null>(null);
@@ -90,7 +89,6 @@ export default function App() {
     setScanTime(0);
     setConnecting(true);
 
-    // Record exact start time here (local variable)
     const scanStartTime = Date.now();
 
     if (scanTimerRef.current) clearInterval(scanTimerRef.current);
@@ -162,12 +160,12 @@ export default function App() {
 
         if (isLoggingRef.current && loggingStartTimeRef.current !== null) {
           const timeSinceStart = ((now - loggingStartTimeRef.current) / 1000).toFixed(3);
-          const baselineStr = baselineStateRef.current !== null ? baselineStateRef.current.toFixed(6) : '';
           const vrefStr = vrefStateRef.current !== null ? vrefStateRef.current.toFixed(6) : '';
           const readingStr = second.toFixed(6);
           const valueStr = val.toFixed(6);
 
-          const entry = `${timeSinceStart},${baselineStr},${vrefStr},${readingStr},${valueStr}`;
+          // Removed baseline from per-data line
+          const entry = `${timeSinceStart},${vrefStr},${readingStr},${valueStr}`;
           logEntriesRef.current.push(entry);
         }
       }
@@ -188,7 +186,6 @@ export default function App() {
     setLoggingStartTime(null);
     logEntriesRef.current = [];
     if (scanTimerRef.current) clearInterval(scanTimerRef.current);
-    scanStartTimeRef.current = null;
   }
 
   async function startLogging() {
@@ -206,12 +203,12 @@ export default function App() {
     const timeStr = now.toLocaleTimeString();
     const baselineStr = baselineStateRef.current !== null ? baselineStateRef.current.toFixed(6) : 'Unknown';
 
-    // Add header rows as separate key,value cells
     logEntriesRef.current.push(`Date,${dateStr}`);
     logEntriesRef.current.push(`Start Time,${timeStr}`);
     logEntriesRef.current.push(`Baseline (V),${baselineStr}`);
-    logEntriesRef.current.push(''); // Blank line
-    logEntriesRef.current.push('Time (s),Baseline (V),Vref (V),Reading (V),Value (V)');
+    logEntriesRef.current.push('');
+    // Removed baseline from header columns
+    logEntriesRef.current.push('Time (s),Vref (V),Reading (V),Value (V)');
 
     ToastAndroid.show('Started logging', ToastAndroid.SHORT);
   }
