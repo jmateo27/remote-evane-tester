@@ -1,3 +1,4 @@
+// index.tsx
 import { Buffer } from 'buffer';
 import React, { useEffect, useRef, useState } from 'react';
 import {
@@ -141,7 +142,25 @@ export default function App() {
 
         if (isLogging && loggingStartTime !== null) {
           const timeSinceStart = ((now - loggingStartTime) / 1000).toFixed(3);
-          setLogEntries((prev) => [...prev, `${timeSinceStart},${val.toFixed(6)}`]);
+          const line = [
+            timeSinceStart,
+            (Baseline ?? 0).toFixed(6),
+            (Vref ?? 0).toFixed(6),
+            second.toFixed(6),
+            val.toFixed(6),
+          ].join(',');
+          if (logEntries.length === 0) {
+            const start = new Date();
+            const header = [
+              `Date,${start.toISOString().split('T')[0]}`,
+              `Start Time,${start.toLocaleTimeString()}`,
+              '',
+              'Time(s),Baseline(V),Vref(V),Reading(V),Value(V)',
+            ];
+            setLogEntries([...header, line]);
+          } else {
+            setLogEntries((prev) => [...prev, line]);
+          }
         }
       }
     });
@@ -164,17 +183,18 @@ export default function App() {
   }
 
   async function startLogging() {
-    const now = new Date();
-    setLoggingStartTime(now.getTime());
-    const dateStr = now.toLocaleDateString().replaceAll('/', '-');
-    const timeStr = now.toLocaleTimeString();
-    const header = `Date: ${dateStr}\nStart Time: ${timeStr}\nBaseline(V): ${Baseline ?? 'Unknown'}\n\nTime(s),Reading(V)`;
-    setLogEntries([header]);
+    setLoggingStartTime(Date.now());
+    setLogEntries([]);
     setIsLogging(true);
   }
 
   async function stopLogging() {
     setIsLogging(false);
+    if (logEntries.length === 0) {
+      ToastAndroid.show('No data logged.', ToastAndroid.SHORT);
+      return;
+    }
+
     const now = new Date();
     const dateStr = now.toISOString().split('T')[0];
     const logDir = FileSystem.documentDirectory + 'logs/';
@@ -196,7 +216,7 @@ export default function App() {
     if (lastSavedFileUri && await Sharing.isAvailableAsync()) {
       try {
         await Sharing.shareAsync(lastSavedFileUri);
-      } catch (e) {
+      } catch {
         ToastAndroid.show('Sharing failed', ToastAndroid.SHORT);
       }
     } else {
