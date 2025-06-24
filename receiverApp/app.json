@@ -23,7 +23,7 @@
         "android.permission.ACCESS_FINE_LOCATION",
         "android.permission.BLUETOOTH_CONNECT"
       ],
-      "package": "com.anonymous.remotevanetester",
+      "package": "com.anonymous.remotevanetesterV2",
       "features": [
         {
           "android:name": "android.hardware.bluetooth_le",

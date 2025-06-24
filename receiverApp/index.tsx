@@ -1,4 +1,7 @@
 import { Buffer } from 'buffer';
+import * as scale from 'd3-scale';
+import * as FileSystem from 'expo-file-system';
+import * as Sharing from 'expo-sharing';
 import React, { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
@@ -11,10 +14,7 @@ import {
   View,
 } from 'react-native';
 import { BleManager, Device } from 'react-native-ble-plx';
-import { LineChart, Grid } from 'react-native-svg-charts';
-import * as scale from 'd3-scale';
-import * as FileSystem from 'expo-file-system';
-import * as Sharing from 'expo-sharing';
+import { Grid, LineChart } from 'react-native-svg-charts';
 
 (global as any).Buffer = Buffer;
 
