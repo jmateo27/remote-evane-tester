@@ -11,23 +11,26 @@ import {
   View,
 } from 'react-native';
 import { BleManager, Device } from 'react-native-ble-plx';
+import { LineChart, Grid, XAxis } from 'react-native-svg-charts';
+import * as scale from 'd3-scale';
 
 (global as any).Buffer = Buffer;
 
 const SERVICE_UUID = '181A';
 const CHARACTERISTIC_UUID = '2A6E';
 const TARGET_NAME = 'TRANSMITTER';
+const MAX_GRAPH_SECONDS = 10;
 
 export default function App() {
   const bleManager = useRef(new BleManager()).current;
   const baselineRef = useRef<number | null>(null);
   const scanTimerRef = useRef<NodeJS.Timer | null>(null);
-  const scanSecondsRef = useRef<number>(0);
 
   const [Baseline, setBaseline] = useState<number | null>(null);
   const [Vref, setVref] = useState<number | null>(null);
   const [Reading, setReading] = useState<number | null>(null);
   const [Value, setValue] = useState<number | null>(null);
+  const [valueHistory, setValueHistory] = useState<{ timestamp: number; value: number }[]>([]);
 
   const [connectedDevice, setConnectedDevice] = useState<Device | null>(null);
   const [connecting, setConnecting] = useState(false);
@@ -84,16 +87,11 @@ export default function App() {
     }
 
     setScanTime(0);
-    scanSecondsRef.current = 0;
     setConnecting(true);
 
     if (scanTimerRef.current) clearInterval(scanTimerRef.current);
     scanTimerRef.current = setInterval(() => {
-      setScanTime((prev) => {
-        const next = prev + 1;
-        scanSecondsRef.current = next;
-        return next;
-      });
+      setScanTime((prev) => prev + 1);
     }, 1000);
 
     bleManager.startDeviceScan(null, null, async (error, device) => {
@@ -115,10 +113,7 @@ export default function App() {
           setConnectedDevice(connected);
           monitorNotifications(connected);
 
-          ToastAndroid.show(
-            `Connected in ${scanSecondsRef.current} seconds.`,
-            ToastAndroid.SHORT
-          );
+          ToastAndroid.show(`Connected in ${scanTime} seconds.`, ToastAndroid.SHORT);
 
           connected.onDisconnected(() => {
             ToastAndroid.show('Device disconnected', ToastAndroid.SHORT);
@@ -167,7 +162,13 @@ export default function App() {
           }
 
           if (baselineRef.current !== null) {
-            setValue(secondFloat - baselineRef.current);
+            const val = secondFloat - baselineRef.current;
+            setValue(val);
+            const now = Date.now();
+            setValueHistory((prev) => {
+              const filtered = prev.filter((d) => now - d.timestamp < MAX_GRAPH_SECONDS * 1000);
+              return [...filtered, { timestamp: now, value: val }];
+            });
           }
         }
       }
@@ -187,6 +188,7 @@ export default function App() {
     setVref(null);
     setReading(null);
     setValue(null);
+    setValueHistory([]);
     setConnecting(false);
     if (scanTimerRef.current) clearInterval(scanTimerRef.current);
   }
@@ -197,6 +199,16 @@ export default function App() {
       if (scanTimerRef.current) clearInterval(scanTimerRef.current);
     };
   }, []);
+
+  const now = Date.now();
+  const graphData = valueHistory
+    .filter((d) => now - d.timestamp < MAX_GRAPH_SECONDS * 1000)
+    .map((d) => ({ y: (now - d.timestamp) / 1000, x: d.value })) // time in seconds ago
+
+  const maxX = Math.max(
+    0.2,
+    ...graphData.map((d) => d.x),
+  );
 
   return (
     <View style={styles.container}>
@@ -233,6 +245,26 @@ export default function App() {
             <Text style={styles.dataText}>
               Value: {Value !== null ? Value.toFixed(6) : '...'}
             </Text>
+          </View>
+
+          <Text style={{ marginTop: 20, fontWeight: 'bold' }}>Last {MAX_GRAPH_SECONDS}s (Value vs Time)</Text>
+          <View style={{ height: 200, padding: 10 }}>
+            <LineChart
+              style={{ flex: 1 }}
+              data={graphData}
+              yAccessor={({ item }) => item.y}
+              xAccessor={({ item }) => item.x}
+              svg={{ stroke: 'rgb(34, 128, 176)', strokeWidth: 2 }}
+              contentInset={{ top: 10, bottom: 10 }}
+              xMin={-0.1}
+              xMax={maxX}
+              yMin={0}
+              yMax={MAX_GRAPH_SECONDS}
+              scale={scale.scaleLinear}
+              numberOfTicks={MAX_GRAPH_SECONDS}
+            >
+              <Grid direction={Grid.Direction.HORIZONTAL} />
+            </LineChart>
           </View>
         </>
       )}
