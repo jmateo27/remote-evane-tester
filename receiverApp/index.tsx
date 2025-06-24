@@ -134,7 +134,6 @@ export default function App() {
 
           setGraphData((data) => {
             const filtered = data.filter((d) => now - d.timestamp < MAX_GRAPH_SECONDS * 1000);
-            // y = time since oldest point, so newest point is y=0, increasing downwards
             const oldestTimestamp = filtered[0]?.timestamp ?? now;
             const updatedData = [...filtered, { x: value, y: (now - oldestTimestamp) / 1000, timestamp: now }];
             return updatedData.slice(-100);
@@ -188,10 +187,10 @@ export default function App() {
     ToastAndroid.show('CSV file saved', ToastAndroid.SHORT);
   }
 
-  // Prepare graph data: y axis goes downward increasing from 0 to MAX_GRAPH_SECONDS
+  // Prepare graph data with y inverted to increase downward (as before)
   const filteredGraphData = graphData
     .filter((item) => item.y !== undefined)
-    .map(({ x, y }) => ({ x, y: y }));
+    .map(({ x, y }) => ({ x, y: MAX_GRAPH_SECONDS - y }));
 
   const maxX = Math.max(0.5, maxXRef.current * 1.1);
   const yTicks = Array.from({ length: MAX_GRAPH_SECONDS + 1 }, (_, i) => i);
@@ -252,7 +251,6 @@ export default function App() {
                   fontSize: 12,
                   textAlign: 'center',
                   marginTop: 5,
-                  transform: [{ rotate: '-90deg' }],
                   width: 200,
                   alignSelf: 'center',
                 }}
