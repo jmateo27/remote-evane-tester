@@ -38,10 +38,10 @@ export default function App() {
   const [connecting, setConnecting] = useState(false);
   const [scanTime, setScanTime] = useState<number>(0);
 
-  // Logging
+  // Logging state
   const [isLogging, setIsLogging] = useState(false);
-  const [loggingStartTime, setLoggingStartTime] = useState<number | null>(null);
-  const [logEntries, setLogEntries] = useState<string[]>([]);
+  const loggingStartTimeRef = useRef<number | null>(null);
+  const logEntriesRef = useRef<string[]>([]);
   const [lastSavedFileUri, setLastSavedFileUri] = useState<string | null>(null);
 
   function updateBaseline(value: number) {
@@ -140,13 +140,20 @@ export default function App() {
           return [...filtered, { timestamp: now, value: val }];
         });
 
-        if (isLogging && loggingStartTime !== null) {
-          const timeSinceStart = ((now - loggingStartTime) / 1000).toFixed(3);
-          // Log full CSV row: time(s), baseline, vref, reading, value
-          setLogEntries((prev) => [
-            ...prev,
-            `${timeSinceStart},${(Baseline ?? '').toFixed?.(6) ?? ''},${(Vref ?? '').toFixed?.(6) ?? ''},${second.toFixed(6)},${val.toFixed(6)}`,
-          ]);
+        if (isLogging && loggingStartTimeRef.current !== null) {
+          const timeSinceStart = ((now - loggingStartTimeRef.current) / 1000).toFixed(3);
+          const baselineStr = Baseline !== null ? Baseline.toFixed(6) : '';
+          const vrefStr = Vref !== null ? Vref.toFixed(6) : '';
+          const readingStr = second.toFixed(6);
+          const valueStr = val.toFixed(6);
+
+          const entry = `${timeSinceStart},${baselineStr},${vrefStr},${readingStr},${valueStr}`;
+          // Append to ref to avoid stale closure
+          logEntriesRef.current = [...logEntriesRef.current, entry];
+          // Also update state for UI if needed
+          setLogEntries(logEntriesRef.current);
+          // Debug log
+          // console.log('Logged entry:', entry);
         }
       }
     });
@@ -163,36 +170,41 @@ export default function App() {
     setValue(null);
     setValueHistory([]);
     setIsLogging(false);
-    setLoggingStartTime(null);
+    loggingStartTimeRef.current = null;
+    logEntriesRef.current = [];
     setLogEntries([]);
     if (scanTimerRef.current) clearInterval(scanTimerRef.current);
   }
 
   async function startLogging() {
     const now = new Date();
-    setLoggingStartTime(now.getTime());
+    loggingStartTimeRef.current = now.getTime();
+
     const dateStr = now.toLocaleDateString().replaceAll('/', '-');
     const timeStr = now.toLocaleTimeString();
+    const baselineStr = Baseline !== null ? Baseline.toFixed(6) : 'Unknown';
 
     // CSV header with metadata and columns, metadata as separate cells
     const header = [
       `Date,${dateStr}`,
       `Start Time,${timeStr}`,
-      `Baseline (V),${Baseline !== null ? Baseline.toFixed(6) : 'Unknown'}`,
+      `Baseline (V),${baselineStr}`,
       '',
       'Time (s),Baseline (V),Vref (V),Reading (V),Value (V)',
     ].join('\n');
 
-    setLogEntries([header]);
+    logEntriesRef.current = [header];
+    setLogEntries(logEntriesRef.current);
     setIsLogging(true);
   }
 
   async function stopLogging() {
     setIsLogging(false);
-    if (logEntries.length <= 1) {
+    if (logEntriesRef.current.length <= 5) {
       ToastAndroid.show('No data logged.', ToastAndroid.SHORT);
       return;
     }
+
     const now = new Date();
     const dateStr = now.toISOString().split('T')[0];
     const logDir = FileSystem.documentDirectory + 'logs/';
@@ -205,13 +217,18 @@ export default function App() {
       fileUri = `${logDir}vaneTestData_${dateStr}_${n}.csv`;
     }
 
-    await FileSystem.writeAsStringAsync(fileUri, logEntries.join('\n'));
-    setLastSavedFileUri(fileUri);
-    ToastAndroid.show('CSV file saved', ToastAndroid.SHORT);
+    try {
+      await FileSystem.writeAsStringAsync(fileUri, logEntriesRef.current.join('\n'));
+      setLastSavedFileUri(fileUri);
+      ToastAndroid.show(`CSV saved: ${fileUri}`, ToastAndroid.SHORT);
+    } catch (e) {
+      ToastAndroid.show('Failed to save CSV file.', ToastAndroid.SHORT);
+      // console.error('Write error:', e);
+    }
   }
 
   async function shareLatestCSV() {
-    if (lastSavedFileUri && await Sharing.isAvailableAsync()) {
+    if (lastSavedFileUri && (await Sharing.isAvailableAsync())) {
       try {
         await Sharing.shareAsync(lastSavedFileUri);
       } catch {
@@ -291,7 +308,7 @@ export default function App() {
               <>
                 <Button title="Stop Logging" onPress={stopLogging} />
                 <Text style={{ marginTop: 10 }}>
-                  Logging... {((Date.now() - (loggingStartTime ?? 0)) / 1000).toFixed(1)} s
+                  Logging... {((Date.now() - (loggingStartTimeRef.current ?? 0)) / 1000).toFixed(1)} s
                 </Text>
               </>
             )}
