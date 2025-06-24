@@ -35,9 +35,6 @@ export default function App() {
   const loggingStartTimeRef = useRef<number | null>(null);
   const logEntriesRef = useRef<string[]>([]);
 
-  // For throttling logs
-  const lastLogTimeRef = useRef<number>(0);
-
   // State variables for UI
   const [Baseline, setBaseline] = useState<number | null>(null);
   const [Vref, setVref] = useState<number | null>(null);
@@ -112,7 +109,11 @@ export default function App() {
           await connected.discoverAllServicesAndCharacteristics();
           setConnectedDevice(connected);
           monitorNotifications(connected);
-          ToastAndroid.show(`Connected in ${scanTime} seconds.`, ToastAndroid.SHORT);
+
+          // Capture current scanTime BEFORE reset to show accurate toast
+          const connectedTime = scanTime;
+          ToastAndroid.show(`Connected in ${connectedTime} seconds.`, ToastAndroid.SHORT);
+
           connected.onDisconnected(disconnect);
         } catch {
           ToastAndroid.show('Connection failed', ToastAndroid.SHORT);
@@ -141,7 +142,7 @@ export default function App() {
       setReading(second);
 
       if (type === 'B') updateBaseline(first);
-      else setVref(first);
+      else if (type === 'V') setVref(first);
 
       if (baselineRef.current !== null) {
         const val = second - baselineRef.current;
@@ -153,20 +154,15 @@ export default function App() {
           return [...filtered, { timestamp: now, value: val }];
         });
 
-        // Throttle logging to once every 200 ms
         if (isLoggingRef.current && loggingStartTimeRef.current !== null) {
-          if (now - lastLogTimeRef.current > 200) {
-            lastLogTimeRef.current = now;
+          const timeSinceStart = ((now - loggingStartTimeRef.current) / 1000).toFixed(3);
+          const baselineStr = baselineStateRef.current !== null ? baselineStateRef.current.toFixed(6) : '';
+          const vrefStr = vrefStateRef.current !== null ? vrefStateRef.current.toFixed(6) : '';
+          const readingStr = second.toFixed(6);
+          const valueStr = val.toFixed(6);
 
-            const timeSinceStart = ((now - loggingStartTimeRef.current) / 1000).toFixed(3);
-            const baselineStr = baselineStateRef.current !== null ? baselineStateRef.current.toFixed(6) : '';
-            const vrefStr = vrefStateRef.current !== null ? vrefStateRef.current.toFixed(6) : '';
-            const readingStr = second.toFixed(6);
-            const valueStr = val.toFixed(6);
-
-            const entry = `${timeSinceStart},${baselineStr},${vrefStr},${readingStr},${valueStr}`;
-            logEntriesRef.current.push(entry);
-          }
+          const entry = `${timeSinceStart},${baselineStr},${vrefStr},${readingStr},${valueStr}`;
+          logEntriesRef.current.push(entry);
         }
       }
     });
@@ -185,7 +181,6 @@ export default function App() {
     setIsLogging(false);
     setLoggingStartTime(null);
     logEntriesRef.current = [];
-    lastLogTimeRef.current = 0;
     if (scanTimerRef.current) clearInterval(scanTimerRef.current);
   }
 
