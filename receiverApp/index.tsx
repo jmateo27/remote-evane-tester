@@ -27,6 +27,7 @@ export default function App() {
   const bleManager = useRef(new BleManager()).current;
   const baselineRef = useRef<number | null>(null);
   const scanTimerRef = useRef<NodeJS.Timer | null>(null);
+  const scanStartTimeRef = useRef<number | null>(null);
 
   // Latest state refs
   const baselineStateRef = useRef<number | null>(null);
@@ -87,10 +88,16 @@ export default function App() {
     if (!permission) return;
 
     setScanTime(0);
+    scanStartTimeRef.current = Date.now(); // <-- Track scan start time here
     setConnecting(true);
 
     if (scanTimerRef.current) clearInterval(scanTimerRef.current);
-    scanTimerRef.current = setInterval(() => setScanTime((s) => s + 1), 1000);
+    scanTimerRef.current = setInterval(() => {
+      if (scanStartTimeRef.current) {
+        const elapsed = Math.floor((Date.now() - scanStartTimeRef.current) / 1000);
+        setScanTime(elapsed);
+      }
+    }, 1000);
 
     bleManager.startDeviceScan(null, null, async (error, device) => {
       if (error) {
@@ -110,8 +117,10 @@ export default function App() {
           setConnectedDevice(connected);
           monitorNotifications(connected);
 
-          // Capture current scanTime BEFORE reset to show accurate toast
-          const connectedTime = scanTime;
+          // Calculate elapsed time from scanStartTimeRef, not scanTime state
+          const connectedTime = scanStartTimeRef.current
+            ? Math.floor((Date.now() - scanStartTimeRef.current) / 1000)
+            : 0;
           ToastAndroid.show(`Connected in ${connectedTime} seconds.`, ToastAndroid.SHORT);
 
           connected.onDisconnected(disconnect);
@@ -121,6 +130,7 @@ export default function App() {
 
         setConnecting(false);
         setScanTime(0);
+        scanStartTimeRef.current = null;
       }
     });
   }
@@ -182,6 +192,7 @@ export default function App() {
     setLoggingStartTime(null);
     logEntriesRef.current = [];
     if (scanTimerRef.current) clearInterval(scanTimerRef.current);
+    scanStartTimeRef.current = null;
   }
 
   async function startLogging() {
