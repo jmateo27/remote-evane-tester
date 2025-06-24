@@ -21,6 +21,7 @@ const TARGET_NAME = 'TRANSMITTER';
 export default function App() {
   const bleManager = useRef(new BleManager()).current;
   const baselineRef = useRef<number | null>(null);
+  const scanTimerRef = useRef<NodeJS.Timer | null>(null);
 
   const [Baseline, setBaseline] = useState<number | null>(null);
   const [Vref, setVref] = useState<number | null>(null);
@@ -29,12 +30,7 @@ export default function App() {
 
   const [connectedDevice, setConnectedDevice] = useState<Device | null>(null);
   const [connecting, setConnecting] = useState(false);
-
   const [scanTime, setScanTime] = useState<number>(0);
-  const scanTimerRef = useRef<NodeJS.Timer | null>(null);
-
-  const [connectedTime, setConnectedTime] = useState<number>(0);
-  const connectedTimerRef = useRef<NodeJS.Timer | null>(null);
 
   function updateBaseline(value: number) {
     baselineRef.current = value;
@@ -98,8 +94,8 @@ export default function App() {
       if (error) {
         console.warn('Scan error:', error);
         bleManager.stopDeviceScan();
-        setConnecting(false);
         clearInterval(scanTimerRef.current!);
+        setConnecting(false);
         return;
       }
 
@@ -113,11 +109,7 @@ export default function App() {
           setConnectedDevice(connected);
           monitorNotifications(connected);
 
-          // Start connected timer
-          setConnectedTime(0);
-          connectedTimerRef.current = setInterval(() => {
-            setConnectedTime((prev) => prev + 1);
-          }, 1000);
+          ToastAndroid.show(`Connected in ${scanTime} seconds.`, ToastAndroid.SHORT);
 
           connected.onDisconnected(() => {
             ToastAndroid.show('Device disconnected', ToastAndroid.SHORT);
@@ -129,6 +121,7 @@ export default function App() {
         }
 
         setConnecting(false);
+        setScanTime(0);
       }
     });
   }
@@ -180,30 +173,26 @@ export default function App() {
         console.warn('Disconnect error:', e);
       }
     }
-
-    if (connectedTimerRef.current) clearInterval(connectedTimerRef.current);
-    if (scanTimerRef.current) clearInterval(scanTimerRef.current);
-
     setConnectedDevice(null);
     setBaseline(null);
     setVref(null);
     setReading(null);
     setValue(null);
     setConnecting(false);
-    setConnectedTime(0);
-    setScanTime(0);
+    if (scanTimerRef.current) clearInterval(scanTimerRef.current);
   }
 
   useEffect(() => {
     return () => {
       bleManager.destroy();
       if (scanTimerRef.current) clearInterval(scanTimerRef.current);
-      if (connectedTimerRef.current) clearInterval(connectedTimerRef.current);
     };
   }, []);
 
   return (
     <View style={styles.container}>
+      <Text style={styles.title}>Remote Vane Tester</Text>
+
       {connecting && (
         <>
           <ActivityIndicator size="large" color="#0000ff" style={{ marginBottom: 10 }} />
@@ -222,7 +211,6 @@ export default function App() {
       {connectedDevice && (
         <>
           <Text style={styles.connectedText}>Connected to {connectedDevice.name}</Text>
-          <Text>Connected for: {connectedTime}s</Text>
           <View style={styles.dataContainer}>
             <Text style={styles.dataText}>
               Baseline: {Baseline !== null ? Baseline.toFixed(6) : '...'}
@@ -236,7 +224,6 @@ export default function App() {
             <Text style={styles.dataText}>
               Value: {Value !== null ? Value.toFixed(6) : '...'}
             </Text>
-            <Button title="Disconnect" onPress={disconnect} />
           </View>
         </>
       )}
@@ -246,6 +233,7 @@ export default function App() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, padding: 20, marginTop: 40 },
+  title: { fontSize: 24, fontWeight: 'bold', marginBottom: 20, textAlign: 'center' },
   connectedText: { fontSize: 18, fontWeight: 'bold', marginBottom: 10 },
   dataContainer: {
     marginTop: 20,
