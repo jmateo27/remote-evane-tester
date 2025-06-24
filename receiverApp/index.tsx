@@ -1,4 +1,3 @@
-// index.tsx
 import { Buffer } from 'buffer';
 import React, { useEffect, useRef, useState } from 'react';
 import {
@@ -142,25 +141,10 @@ export default function App() {
 
         if (isLogging && loggingStartTime !== null) {
           const timeSinceStart = ((now - loggingStartTime) / 1000).toFixed(3);
-          const line = [
-            timeSinceStart,
-            (Baseline ?? 0).toFixed(6),
-            (Vref ?? 0).toFixed(6),
-            second.toFixed(6),
-            val.toFixed(6),
-          ].join(',');
-          if (logEntries.length === 0) {
-            const start = new Date();
-            const header = [
-              `Date,${start.toISOString().split('T')[0]}`,
-              `Start Time,${start.toLocaleTimeString()}`,
-              '',
-              'Time(s),Baseline(V),Vref(V),Reading(V),Value(V)',
-            ];
-            setLogEntries([...header, line]);
-          } else {
-            setLogEntries((prev) => [...prev, line]);
-          }
+          setLogEntries((prev) => [
+            ...prev,
+            `${timeSinceStart},${Baseline ?? ''},${Vref ?? ''},${Reading ?? ''},${val.toFixed(6)}`
+          ]);
         }
       }
     });
@@ -183,18 +167,26 @@ export default function App() {
   }
 
   async function startLogging() {
-    setLoggingStartTime(Date.now());
-    setLogEntries([]);
+    const now = new Date();
+    setLoggingStartTime(now.getTime());
+    const dateStr = now.toISOString().split('T')[0];
+    const timeStr = now.toLocaleTimeString();
+    const header = [
+      `Date,${dateStr}`,
+      `Start Time,${timeStr}`,
+      '',
+      'Time(s),Baseline(V),Vref(V),Reading(V),Value(V)'
+    ];
+    setLogEntries(header);
     setIsLogging(true);
   }
 
   async function stopLogging() {
     setIsLogging(false);
-    if (logEntries.length === 0) {
+    if (!logEntries || logEntries.length <= 4) {
       ToastAndroid.show('No data logged.', ToastAndroid.SHORT);
       return;
     }
-
     const now = new Date();
     const dateStr = now.toISOString().split('T')[0];
     const logDir = FileSystem.documentDirectory + 'logs/';
