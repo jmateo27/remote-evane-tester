@@ -22,39 +22,40 @@ const SERVICE_UUID = '181A';
 const CHARACTERISTIC_UUID = '2A6E';
 const TARGET_NAME = 'TRANSMITTER';
 const MAX_GRAPH_SECONDS = 10;
-const LOG_THROTTLE_MS = 500; // log at most once every 500ms
 
 export default function App() {
   const bleManager = useRef(new BleManager()).current;
   const baselineRef = useRef<number | null>(null);
   const scanTimerRef = useRef<NodeJS.Timer | null>(null);
 
+  // Latest state refs
+  const baselineStateRef = useRef<number | null>(null);
+  const vrefStateRef = useRef<number | null>(null);
+  const isLoggingRef = useRef(false);
+  const loggingStartTimeRef = useRef<number | null>(null);
+  const logEntriesRef = useRef<string[]>([]);
+
   // For throttling logs
   const lastLogTimeRef = useRef<number>(0);
 
+  // State variables for UI
   const [Baseline, setBaseline] = useState<number | null>(null);
   const [Vref, setVref] = useState<number | null>(null);
   const [Reading, setReading] = useState<number | null>(null);
   const [Value, setValue] = useState<number | null>(null);
   const [valueHistory, setValueHistory] = useState<{ timestamp: number; value: number }[]>([]);
-
   const [connectedDevice, setConnectedDevice] = useState<Device | null>(null);
   const [connecting, setConnecting] = useState(false);
   const [scanTime, setScanTime] = useState<number>(0);
-
   const [isLogging, setIsLogging] = useState(false);
   const [loggingStartTime, setLoggingStartTime] = useState<number | null>(null);
-  const logEntriesRef = useRef<string[]>([]);
   const [lastSavedFileUri, setLastSavedFileUri] = useState<string | null>(null);
 
-  // Sync state to refs for logging
-  useEffect(() => {
-    baselineRef.current = Baseline;
-  }, [Baseline]);
-
-  useEffect(() => {
-    // no need to sync for Vref, Reading, Value unless you want to log them as well
-  }, [Vref, Reading, Value]);
+  // Update refs when states change
+  useEffect(() => { baselineStateRef.current = Baseline; }, [Baseline]);
+  useEffect(() => { vrefStateRef.current = Vref; }, [Vref]);
+  useEffect(() => { isLoggingRef.current = isLogging; }, [isLogging]);
+  useEffect(() => { loggingStartTimeRef.current = loggingStartTime; }, [loggingStartTime]);
 
   function updateBaseline(value: number) {
     baselineRef.current = value;
@@ -140,7 +141,7 @@ export default function App() {
       setReading(second);
 
       if (type === 'B') updateBaseline(first);
-      else if (type === 'V') setVref(first);
+      else setVref(first);
 
       if (baselineRef.current !== null) {
         const val = second - baselineRef.current;
@@ -152,13 +153,14 @@ export default function App() {
           return [...filtered, { timestamp: now, value: val }];
         });
 
-        if (isLogging && loggingStartTime !== null) {
-          if (now - lastLogTimeRef.current >= LOG_THROTTLE_MS) {
+        // Throttle logging to once every 200 ms
+        if (isLoggingRef.current && loggingStartTimeRef.current !== null) {
+          if (now - lastLogTimeRef.current > 200) {
             lastLogTimeRef.current = now;
 
-            const timeSinceStart = ((now - loggingStartTime) / 1000).toFixed(3);
-            const baselineStr = baselineRef.current !== null ? baselineRef.current.toFixed(6) : '';
-            const vrefStr = Vref !== null ? Vref.toFixed(6) : '';
+            const timeSinceStart = ((now - loggingStartTimeRef.current) / 1000).toFixed(3);
+            const baselineStr = baselineStateRef.current !== null ? baselineStateRef.current.toFixed(6) : '';
+            const vrefStr = vrefStateRef.current !== null ? vrefStateRef.current.toFixed(6) : '';
             const readingStr = second.toFixed(6);
             const valueStr = val.toFixed(6);
 
@@ -183,23 +185,44 @@ export default function App() {
     setIsLogging(false);
     setLoggingStartTime(null);
     logEntriesRef.current = [];
+    lastLogTimeRef.current = 0;
     if (scanTimerRef.current) clearInterval(scanTimerRef.current);
   }
 
   async function startLogging() {
+    if (isLoggingRef.current) {
+      ToastAndroid.show('Already logging', ToastAndroid.SHORT);
+      return;
+    }
     const now = new Date();
     setLoggingStartTime(now.getTime());
+    setIsLogging(true);
+
+    logEntriesRef.current = [];
+
     const dateStr = now.toLocaleDateString().replaceAll('/', '-');
     const timeStr = now.toLocaleTimeString();
-    const header = 'Date,' + dateStr + '\nStart Time,' + timeStr + '\nBaseline(V),' + (Baseline ?? 'Unknown') + '\n\nTime(s),Baseline(V),Vref(V),Reading(V),Value(V)';
-    logEntriesRef.current = [header];
-    setIsLogging(true);
+    const baselineStr = baselineStateRef.current !== null ? baselineStateRef.current.toFixed(6) : 'Unknown';
+
+    // Add header rows as separate key,value cells
+    logEntriesRef.current.push(`Date,${dateStr}`);
+    logEntriesRef.current.push(`Start Time,${timeStr}`);
+    logEntriesRef.current.push(`Baseline (V),${baselineStr}`);
+    logEntriesRef.current.push(''); // Blank line
+    logEntriesRef.current.push('Time (s),Baseline (V),Vref (V),Reading (V),Value (V)');
+
+    ToastAndroid.show('Started logging', ToastAndroid.SHORT);
   }
 
   async function stopLogging() {
+    if (!isLoggingRef.current) {
+      ToastAndroid.show('Not currently logging', ToastAndroid.SHORT);
+      return;
+    }
     setIsLogging(false);
-    if (logEntriesRef.current.length <= 1) {
-      ToastAndroid.show('No data logged', ToastAndroid.SHORT);
+
+    if (logEntriesRef.current.length <= 5) {
+      ToastAndroid.show('No data logged.', ToastAndroid.SHORT);
       return;
     }
 
@@ -215,16 +238,20 @@ export default function App() {
       fileUri = `${logDir}vaneTestData_${dateStr}_${n}.csv`;
     }
 
-    await FileSystem.writeAsStringAsync(fileUri, logEntriesRef.current.join('\n'));
-    setLastSavedFileUri(fileUri);
-    ToastAndroid.show('CSV file saved', ToastAndroid.SHORT);
+    try {
+      await FileSystem.writeAsStringAsync(fileUri, logEntriesRef.current.join('\n'));
+      setLastSavedFileUri(fileUri);
+      ToastAndroid.show(`CSV saved: ${fileUri}`, ToastAndroid.SHORT);
+    } catch (e) {
+      ToastAndroid.show('Failed to save CSV file.', ToastAndroid.SHORT);
+    }
   }
 
   async function shareLatestCSV() {
-    if (lastSavedFileUri && await Sharing.isAvailableAsync()) {
+    if (lastSavedFileUri && (await Sharing.isAvailableAsync())) {
       try {
         await Sharing.shareAsync(lastSavedFileUri);
-      } catch (e) {
+      } catch {
         ToastAndroid.show('Sharing failed', ToastAndroid.SHORT);
       }
     } else {
@@ -305,6 +332,7 @@ export default function App() {
                 </Text>
               </>
             )}
+
             <View style={{ marginTop: 10 }}>
               <Button title="Share CSV" onPress={shareLatestCSV} />
             </View>
