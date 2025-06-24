@@ -88,15 +88,15 @@ export default function App() {
     if (!permission) return;
 
     setScanTime(0);
-    scanStartTimeRef.current = Date.now(); // <-- Track scan start time here
     setConnecting(true);
+
+    // Record exact start time here (local variable)
+    const scanStartTime = Date.now();
 
     if (scanTimerRef.current) clearInterval(scanTimerRef.current);
     scanTimerRef.current = setInterval(() => {
-      if (scanStartTimeRef.current) {
-        const elapsed = Math.floor((Date.now() - scanStartTimeRef.current) / 1000);
-        setScanTime(elapsed);
-      }
+      const elapsed = Math.floor((Date.now() - scanStartTime) / 1000);
+      setScanTime(elapsed);
     }, 1000);
 
     bleManager.startDeviceScan(null, null, async (error, device) => {
@@ -117,10 +117,7 @@ export default function App() {
           setConnectedDevice(connected);
           monitorNotifications(connected);
 
-          // Calculate elapsed time from scanStartTimeRef, not scanTime state
-          const connectedTime = scanStartTimeRef.current
-            ? Math.floor((Date.now() - scanStartTimeRef.current) / 1000)
-            : 0;
+          const connectedTime = Math.floor((Date.now() - scanStartTime) / 1000);
           ToastAndroid.show(`Connected in ${connectedTime} seconds.`, ToastAndroid.SHORT);
 
           connected.onDisconnected(disconnect);
@@ -130,7 +127,6 @@ export default function App() {
 
         setConnecting(false);
         setScanTime(0);
-        scanStartTimeRef.current = null;
       }
     });
   }
