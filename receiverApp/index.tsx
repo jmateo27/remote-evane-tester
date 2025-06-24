@@ -38,11 +38,10 @@ export default function App() {
   const [connecting, setConnecting] = useState(false);
   const [scanTime, setScanTime] = useState<number>(0);
 
-  // Logging state
   const [isLogging, setIsLogging] = useState(false);
   const [loggingStartTime, setLoggingStartTime] = useState<number | null>(null);
   const [logEntries, setLogEntries] = useState<string[]>([]);
-  const [savedFileUri, setSavedFileUri] = useState<string | null>(null);
+  const [lastSavedFileUri, setLastSavedFileUri] = useState<string | null>(null);
 
   function updateBaseline(value: number) {
     baselineRef.current = value;
@@ -93,6 +92,7 @@ export default function App() {
       if (device?.name === TARGET_NAME) {
         bleManager.stopDeviceScan();
         clearInterval(scanTimerRef.current!);
+
         try {
           const connected = await device.connect();
           await connected.discoverAllServicesAndCharacteristics();
@@ -103,6 +103,7 @@ export default function App() {
         } catch {
           ToastAndroid.show('Connection failed', ToastAndroid.SHORT);
         }
+
         setConnecting(false);
         setScanTime(0);
       }
@@ -110,55 +111,56 @@ export default function App() {
   }
 
   function monitorNotifications(device: Device) {
-    device.monitorCharacteristicForService(
-      SERVICE_UUID,
-      CHARACTERISTIC_UUID,
-      (_, characteristic) => {
-        const decoded = Buffer.from(characteristic?.value ?? '', 'base64').toString('utf-8');
-        const match = decoded.match(/^([BV]),(-?\d+(\.\d+)?),(-?\d+(\.\d+)?)$/);
-        if (!match) return;
+    device.monitorCharacteristicForService(SERVICE_UUID, CHARACTERISTIC_UUID, (err, characteristic) => {
+      if (err || !characteristic?.value) return;
 
-        const type = match[1];
-        const first = parseFloat(match[2]);
-        const second = parseFloat(match[4]);
-        setReading(second);
+      const decoded = Buffer.from(characteristic.value, 'base64').toString('utf-8');
+      const isValid = /^[BV]-?\d+(\.\d+)?,-?\d+(\.\d+)?$/.test(decoded);
+      if (!isValid) return;
 
-        if (type === 'B') updateBaseline(first);
-        else setVref(first);
+      const type = decoded[0];
+      const [firstStr, secondStr] = decoded.slice(1).split(',');
+      const first = parseFloat(firstStr);
+      const second = parseFloat(secondStr);
+      if (isNaN(first) || isNaN(second)) return;
 
-        if (baselineRef.current !== null) {
-          const value = second - baselineRef.current;
-          setValue(value);
+      setReading(second);
 
-          const now = Date.now();
-          setValueHistory((data) => {
-            const filtered = data.filter((d) => now - d.timestamp < MAX_GRAPH_SECONDS * 1000);
-            return [...filtered, { timestamp: now, value }];
-          });
+      if (type === 'B') updateBaseline(first);
+      else if (type === 'V') setVref(first);
 
-          if (isLogging && loggingStartTime !== null) {
-            const timeSinceStart = ((now - loggingStartTime) / 1000).toFixed(3);
-            setLogEntries((prev) => [...prev, `${timeSinceStart},${value.toFixed(6)}`]);
-          }
+      if (baselineRef.current !== null) {
+        const val = second - baselineRef.current;
+        setValue(val);
+
+        const now = Date.now();
+        setValueHistory((prev) => {
+          const filtered = prev.filter((d) => now - d.timestamp < MAX_GRAPH_SECONDS * 1000);
+          return [...filtered, { timestamp: now, value: val }];
+        });
+
+        if (isLogging && loggingStartTime !== null) {
+          const timeSinceStart = ((now - loggingStartTime) / 1000).toFixed(3);
+          setLogEntries((prev) => [...prev, `${timeSinceStart},${val.toFixed(6)}`]);
         }
       }
-    );
+    });
   }
 
-  function disconnect() {
-    connectedDevice?.cancelConnection();
+  async function disconnect() {
+    try {
+      await connectedDevice?.cancelConnection();
+    } catch {}
     setConnectedDevice(null);
     setBaseline(null);
     setVref(null);
     setReading(null);
     setValue(null);
     setValueHistory([]);
-    setConnecting(false);
-    if (scanTimerRef.current) clearInterval(scanTimerRef.current);
     setIsLogging(false);
     setLoggingStartTime(null);
     setLogEntries([]);
-    setSavedFileUri(null);
+    if (scanTimerRef.current) clearInterval(scanTimerRef.current);
   }
 
   async function startLogging() {
@@ -169,7 +171,6 @@ export default function App() {
     const header = `Date: ${dateStr}\nStart Time: ${timeStr}\nBaseline(V): ${Baseline ?? 'Unknown'}\n\nTime(s),Reading(V)`;
     setLogEntries([header]);
     setIsLogging(true);
-    setSavedFileUri(null);
   }
 
   async function stopLogging() {
@@ -178,40 +179,44 @@ export default function App() {
     const dateStr = now.toISOString().split('T')[0];
     const logDir = FileSystem.documentDirectory + 'logs/';
     await FileSystem.makeDirectoryAsync(logDir, { intermediates: true });
+
     let n = 1;
     let fileUri = `${logDir}vaneTestData_${dateStr}_${n}.csv`;
-    while (await FileSystem.getInfoAsync(fileUri).then((f) => f.exists)) {
+    while ((await FileSystem.getInfoAsync(fileUri)).exists) {
       n++;
       fileUri = `${logDir}vaneTestData_${dateStr}_${n}.csv`;
     }
+
     await FileSystem.writeAsStringAsync(fileUri, logEntries.join('\n'));
-    setSavedFileUri(fileUri);
+    setLastSavedFileUri(fileUri);
     ToastAndroid.show('CSV file saved', ToastAndroid.SHORT);
   }
 
-  async function shareCSV() {
-    if (!savedFileUri) return;
-    try {
-      await Sharing.shareAsync(savedFileUri, {
-        mimeType: 'text/csv',
-        dialogTitle: 'Share CSV file',
-        UTI: 'public.comma-separated-values-text', // iOS
-      });
-    } catch (error) {
-      ToastAndroid.show('Failed to share file', ToastAndroid.SHORT);
-      console.warn('Share error:', error);
+  async function shareLatestCSV() {
+    if (lastSavedFileUri && await Sharing.isAvailableAsync()) {
+      try {
+        await Sharing.shareAsync(lastSavedFileUri);
+      } catch (e) {
+        ToastAndroid.show('Sharing failed', ToastAndroid.SHORT);
+      }
+    } else {
+      ToastAndroid.show('No CSV available to share.', ToastAndroid.SHORT);
     }
   }
+
+  useEffect(() => {
+    return () => {
+      bleManager.destroy();
+      if (scanTimerRef.current) clearInterval(scanTimerRef.current);
+    };
+  }, []);
 
   const now = Date.now();
   const graphData = valueHistory
     .filter((d) => now - d.timestamp < MAX_GRAPH_SECONDS * 1000)
     .map((d) => ({ y: (now - d.timestamp) / 1000, x: d.value }));
 
-  const maxX = Math.max(
-    0.2,
-    ...graphData.map((d) => d.x),
-  );
+  const maxX = Math.max(0.2, ...graphData.map((d) => d.x));
 
   return (
     <View style={styles.container}>
@@ -236,22 +241,13 @@ export default function App() {
         <>
           <Text style={styles.connectedText}>Connected to {connectedDevice.name}</Text>
           <View style={styles.dataContainer}>
-            <Text style={styles.dataText}>
-              Baseline: {Baseline !== null ? Baseline.toFixed(6) : '...'}
-            </Text>
-            <Text style={styles.dataText}>
-              Vref: {Vref !== null ? Vref.toFixed(6) : '...'}
-            </Text>
-            <Text style={styles.dataText}>
-              Reading: {Reading !== null ? Reading.toFixed(6) : '...'}
-            </Text>
-            <Text style={styles.dataText}>
-              Value: {Value !== null ? Value.toFixed(6) : '...'}
-            </Text>
+            <Text style={styles.dataText}>Baseline: {Baseline !== null ? Baseline.toFixed(6) : '...'}</Text>
+            <Text style={styles.dataText}>Vref: {Vref !== null ? Vref.toFixed(6) : '...'}</Text>
+            <Text style={styles.dataText}>Reading: {Reading !== null ? Reading.toFixed(6) : '...'}</Text>
+            <Text style={styles.dataText}>Value: {Value !== null ? Value.toFixed(6) : '...'}</Text>
           </View>
 
-          <Text style={{ marginTop: 20, fontWeight: 'bold' }}>Last {MAX_GRAPH_SECONDS}s (Value vs Time)</Text>
-          <View style={{ height: 200, padding: 10 }}>
+          <View style={{ marginTop: 20, height: 200, padding: 10 }}>
             <LineChart
               style={{ flex: 1 }}
               data={graphData}
@@ -277,16 +273,13 @@ export default function App() {
               <>
                 <Button title="Stop Logging" onPress={stopLogging} />
                 <Text style={{ marginTop: 10 }}>
-                  Logging... {((Date.now() - (loggingStartTime ?? 0)) / 1000).toFixed(1)}s
+                  Logging... {((Date.now() - (loggingStartTime ?? 0)) / 1000).toFixed(1)} s
                 </Text>
               </>
             )}
-
-            {savedFileUri && !isLogging && (
-              <View style={{ marginTop: 10 }}>
-                <Button title="Share CSV" onPress={shareCSV} />
-              </View>
-            )}
+            <View style={{ marginTop: 10 }}>
+              <Button title="Share CSV" onPress={shareLatestCSV} />
+            </View>
           </View>
         </>
       )}
