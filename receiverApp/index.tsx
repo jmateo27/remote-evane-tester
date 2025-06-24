@@ -14,6 +14,7 @@ import { BleManager, Device } from 'react-native-ble-plx';
 import { LineChart, Grid } from 'react-native-svg-charts';
 import * as scale from 'd3-scale';
 import * as FileSystem from 'expo-file-system';
+import * as Sharing from 'expo-sharing';
 
 (global as any).Buffer = Buffer;
 
@@ -41,6 +42,7 @@ export default function App() {
   const [isLogging, setIsLogging] = useState(false);
   const [loggingStartTime, setLoggingStartTime] = useState<number | null>(null);
   const [logEntries, setLogEntries] = useState<string[]>([]);
+  const [savedFileUri, setSavedFileUri] = useState<string | null>(null);
 
   function updateBaseline(value: number) {
     baselineRef.current = value;
@@ -51,30 +53,15 @@ export default function App() {
     if (Platform.OS === 'android') {
       if (Platform.Version < 31) {
         const granted = await PermissionsAndroid.request(
-          PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
-          {
-            title: 'Location Permission Required',
-            message: 'Location permission is needed to scan for BLE devices',
-            buttonPositive: 'OK',
-          }
+          PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION
         );
         return granted === PermissionsAndroid.RESULTS.GRANTED;
       } else {
         const grantedScan = await PermissionsAndroid.request(
-          PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN,
-          {
-            title: 'Bluetooth Scan Permission Required',
-            message: 'Bluetooth scan permission is needed to find devices',
-            buttonPositive: 'OK',
-          }
+          PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN
         );
         const grantedConnect = await PermissionsAndroid.request(
-          PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT,
-          {
-            title: 'Bluetooth Connect Permission Required',
-            message: 'Bluetooth connect permission is needed to connect to devices',
-            buttonPositive: 'OK',
-          }
+          PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT
         );
         return (
           grantedScan === PermissionsAndroid.RESULTS.GRANTED &&
@@ -87,22 +74,16 @@ export default function App() {
 
   async function startScanAndConnect() {
     const permission = await requestPermissions();
-    if (!permission) {
-      setConnecting(false);
-      return;
-    }
+    if (!permission) return;
 
     setScanTime(0);
     setConnecting(true);
 
     if (scanTimerRef.current) clearInterval(scanTimerRef.current);
-    scanTimerRef.current = setInterval(() => {
-      setScanTime((prev) => prev + 1);
-    }, 1000);
+    scanTimerRef.current = setInterval(() => setScanTime((s) => s + 1), 1000);
 
     bleManager.startDeviceScan(null, null, async (error, device) => {
       if (error) {
-        console.warn('Scan error:', error);
         bleManager.stopDeviceScan();
         clearInterval(scanTimerRef.current!);
         setConnecting(false);
@@ -112,24 +93,16 @@ export default function App() {
       if (device?.name === TARGET_NAME) {
         bleManager.stopDeviceScan();
         clearInterval(scanTimerRef.current!);
-
         try {
           const connected = await device.connect();
           await connected.discoverAllServicesAndCharacteristics();
           setConnectedDevice(connected);
           monitorNotifications(connected);
-
           ToastAndroid.show(`Connected in ${scanTime} seconds.`, ToastAndroid.SHORT);
-
-          connected.onDisconnected(() => {
-            ToastAndroid.show('Device disconnected', ToastAndroid.SHORT);
-            disconnect();
-          });
-        } catch (e) {
-          console.warn('Connection failed:', e);
+          connected.onDisconnected(disconnect);
+        } catch {
           ToastAndroid.show('Connection failed', ToastAndroid.SHORT);
         }
-
         setConnecting(false);
         setScanTime(0);
       }
@@ -140,63 +113,40 @@ export default function App() {
     device.monitorCharacteristicForService(
       SERVICE_UUID,
       CHARACTERISTIC_UUID,
-      (error, characteristic) => {
-        if (error) {
-          console.warn('Notification error:', error);
-          disconnect();
-          return;
-        }
+      (_, characteristic) => {
+        const decoded = Buffer.from(characteristic?.value ?? '', 'base64').toString('utf-8');
+        const match = decoded.match(/^([BV]),(-?\d+(\.\d+)?),(-?\d+(\.\d+)?)$/);
+        if (!match) return;
 
-        if (characteristic?.value) {
-          const decoded = Buffer.from(characteristic.value, 'base64').toString('utf-8');
-          const isValid = /^[BV]-?\d+(\.\d+)?,-?\d+(\.\d+)?$/.test(decoded);
-          if (!isValid) return;
+        const type = match[1];
+        const first = parseFloat(match[2]);
+        const second = parseFloat(match[4]);
+        setReading(second);
 
-          const type = decoded.charAt(0);
-          const [firstStr, secondStr] = decoded.slice(1).split(',');
-          const firstFloat = parseFloat(firstStr);
-          const secondFloat = parseFloat(secondStr);
+        if (type === 'B') updateBaseline(first);
+        else setVref(first);
 
-          if (isNaN(firstFloat) || isNaN(secondFloat)) return;
+        if (baselineRef.current !== null) {
+          const value = second - baselineRef.current;
+          setValue(value);
 
-          setReading(secondFloat);
+          const now = Date.now();
+          setValueHistory((data) => {
+            const filtered = data.filter((d) => now - d.timestamp < MAX_GRAPH_SECONDS * 1000);
+            return [...filtered, { timestamp: now, value }];
+          });
 
-          if (type === 'B') {
-            updateBaseline(firstFloat);
-          } else if (type === 'V') {
-            setVref(firstFloat);
-          }
-
-          if (baselineRef.current !== null) {
-            const val = secondFloat - baselineRef.current;
-            setValue(val);
-            const now = Date.now();
-
-            // Update graph data
-            setValueHistory((prev) => {
-              const filtered = prev.filter((d) => now - d.timestamp < MAX_GRAPH_SECONDS * 1000);
-              return [...filtered, { timestamp: now, value: val }];
-            });
-
-            // Add log entry if logging
-            if (isLogging && loggingStartTime !== null) {
-              const timeSinceStart = ((now - loggingStartTime) / 1000).toFixed(3);
-              setLogEntries((prev) => [...prev, `${timeSinceStart},${val.toFixed(6)}`]);
-            }
+          if (isLogging && loggingStartTime !== null) {
+            const timeSinceStart = ((now - loggingStartTime) / 1000).toFixed(3);
+            setLogEntries((prev) => [...prev, `${timeSinceStart},${value.toFixed(6)}`]);
           }
         }
       }
     );
   }
 
-  async function disconnect() {
-    if (connectedDevice) {
-      try {
-        await connectedDevice.cancelConnection();
-      } catch (e) {
-        console.warn('Disconnect error:', e);
-      }
-    }
+  function disconnect() {
+    connectedDevice?.cancelConnection();
     setConnectedDevice(null);
     setBaseline(null);
     setVref(null);
@@ -204,20 +154,22 @@ export default function App() {
     setValue(null);
     setValueHistory([]);
     setConnecting(false);
+    if (scanTimerRef.current) clearInterval(scanTimerRef.current);
     setIsLogging(false);
     setLoggingStartTime(null);
     setLogEntries([]);
-    if (scanTimerRef.current) clearInterval(scanTimerRef.current);
+    setSavedFileUri(null);
   }
 
   async function startLogging() {
     const now = new Date();
     setLoggingStartTime(now.getTime());
-    const dateStr = now.toLocaleDateString().replace(/\//g, '-');
+    const dateStr = now.toLocaleDateString().replaceAll('/', '-');
     const timeStr = now.toLocaleTimeString();
     const header = `Date: ${dateStr}\nStart Time: ${timeStr}\nBaseline(V): ${Baseline ?? 'Unknown'}\n\nTime(s),Reading(V)`;
     setLogEntries([header]);
     setIsLogging(true);
+    setSavedFileUri(null);
   }
 
   async function stopLogging() {
@@ -228,27 +180,38 @@ export default function App() {
     await FileSystem.makeDirectoryAsync(logDir, { intermediates: true });
     let n = 1;
     let fileUri = `${logDir}vaneTestData_${dateStr}_${n}.csv`;
-    while ((await FileSystem.getInfoAsync(fileUri)).exists) {
+    while (await FileSystem.getInfoAsync(fileUri).then((f) => f.exists)) {
       n++;
       fileUri = `${logDir}vaneTestData_${dateStr}_${n}.csv`;
     }
     await FileSystem.writeAsStringAsync(fileUri, logEntries.join('\n'));
+    setSavedFileUri(fileUri);
     ToastAndroid.show('CSV file saved', ToastAndroid.SHORT);
   }
 
-  useEffect(() => {
-    return () => {
-      bleManager.destroy();
-      if (scanTimerRef.current) clearInterval(scanTimerRef.current);
-    };
-  }, []);
+  async function shareCSV() {
+    if (!savedFileUri) return;
+    try {
+      await Sharing.shareAsync(savedFileUri, {
+        mimeType: 'text/csv',
+        dialogTitle: 'Share CSV file',
+        UTI: 'public.comma-separated-values-text', // iOS
+      });
+    } catch (error) {
+      ToastAndroid.show('Failed to share file', ToastAndroid.SHORT);
+      console.warn('Share error:', error);
+    }
+  }
 
   const now = Date.now();
   const graphData = valueHistory
     .filter((d) => now - d.timestamp < MAX_GRAPH_SECONDS * 1000)
     .map((d) => ({ y: (now - d.timestamp) / 1000, x: d.value }));
 
-  const maxX = Math.max(0.2, ...graphData.map((d) => d.x));
+  const maxX = Math.max(
+    0.2,
+    ...graphData.map((d) => d.x),
+  );
 
   return (
     <View style={styles.container}>
@@ -287,7 +250,8 @@ export default function App() {
             </Text>
           </View>
 
-          <View style={{ marginTop: 20, height: 200, padding: 10 }}>
+          <Text style={{ marginTop: 20, fontWeight: 'bold' }}>Last {MAX_GRAPH_SECONDS}s (Value vs Time)</Text>
+          <View style={{ height: 200, padding: 10 }}>
             <LineChart
               style={{ flex: 1 }}
               data={graphData}
@@ -313,9 +277,15 @@ export default function App() {
               <>
                 <Button title="Stop Logging" onPress={stopLogging} />
                 <Text style={{ marginTop: 10 }}>
-                  Logging... {((Date.now() - (loggingStartTime ?? 0)) / 1000).toFixed(1)} s
+                  Logging... {((Date.now() - (loggingStartTime ?? 0)) / 1000).toFixed(1)}s
                 </Text>
               </>
+            )}
+
+            {savedFileUri && !isLogging && (
+              <View style={{ marginTop: 10 }}>
+                <Button title="Share CSV" onPress={shareCSV} />
+              </View>
             )}
           </View>
         </>
