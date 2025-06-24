@@ -28,21 +28,31 @@ export default function App() {
   const baselineRef = useRef<number | null>(null);
   const scanTimerRef = useRef<NodeJS.Timer | null>(null);
 
+  // Latest state refs
+  const baselineStateRef = useRef<number | null>(null);
+  const vrefStateRef = useRef<number | null>(null);
+  const isLoggingRef = useRef(false);
+  const loggingStartTimeRef = useRef<number | null>(null);
+  const logEntriesRef = useRef<string[]>([]);
+
+  // State variables for UI
   const [Baseline, setBaseline] = useState<number | null>(null);
   const [Vref, setVref] = useState<number | null>(null);
   const [Reading, setReading] = useState<number | null>(null);
   const [Value, setValue] = useState<number | null>(null);
   const [valueHistory, setValueHistory] = useState<{ timestamp: number; value: number }[]>([]);
-
   const [connectedDevice, setConnectedDevice] = useState<Device | null>(null);
   const [connecting, setConnecting] = useState(false);
   const [scanTime, setScanTime] = useState<number>(0);
-
-  // Logging state in React state only
   const [isLogging, setIsLogging] = useState(false);
   const [loggingStartTime, setLoggingStartTime] = useState<number | null>(null);
-  const [logEntries, setLogEntries] = useState<string[]>([]);
   const [lastSavedFileUri, setLastSavedFileUri] = useState<string | null>(null);
+
+  // Update refs when states change
+  useEffect(() => { baselineStateRef.current = Baseline; }, [Baseline]);
+  useEffect(() => { vrefStateRef.current = Vref; }, [Vref]);
+  useEffect(() => { isLoggingRef.current = isLogging; }, [isLogging]);
+  useEffect(() => { loggingStartTimeRef.current = loggingStartTime; }, [loggingStartTime]);
 
   function updateBaseline(value: number) {
     baselineRef.current = value;
@@ -140,15 +150,15 @@ export default function App() {
           return [...filtered, { timestamp: now, value: val }];
         });
 
-        if (isLogging && loggingStartTime !== null) {
-          const timeSinceStart = ((now - loggingStartTime) / 1000).toFixed(3);
-          const baselineStr = Baseline !== null ? Baseline.toFixed(6) : '';
-          const vrefStr = Vref !== null ? Vref.toFixed(6) : '';
+        if (isLoggingRef.current && loggingStartTimeRef.current !== null) {
+          const timeSinceStart = ((now - loggingStartTimeRef.current) / 1000).toFixed(3);
+          const baselineStr = baselineStateRef.current !== null ? baselineStateRef.current.toFixed(6) : '';
+          const vrefStr = vrefStateRef.current !== null ? vrefStateRef.current.toFixed(6) : '';
           const readingStr = second.toFixed(6);
           const valueStr = val.toFixed(6);
 
           const entry = `${timeSinceStart},${baselineStr},${vrefStr},${readingStr},${valueStr}`;
-          setLogEntries((prev) => [...prev, entry]);
+          logEntriesRef.current.push(entry);
         }
       }
     });
@@ -166,43 +176,43 @@ export default function App() {
     setValueHistory([]);
     setIsLogging(false);
     setLoggingStartTime(null);
-    setLogEntries([]);
+    logEntriesRef.current = [];
     if (scanTimerRef.current) clearInterval(scanTimerRef.current);
   }
 
   async function startLogging() {
-    if (isLogging) {
+    if (isLoggingRef.current) {
       ToastAndroid.show('Already logging', ToastAndroid.SHORT);
       return;
     }
     const now = new Date();
     setLoggingStartTime(now.getTime());
+    setIsLogging(true);
+
+    logEntriesRef.current = [];
 
     const dateStr = now.toLocaleDateString().replaceAll('/', '-');
     const timeStr = now.toLocaleTimeString();
-    const baselineStr = Baseline !== null ? Baseline.toFixed(6) : 'Unknown';
+    const baselineStr = baselineStateRef.current !== null ? baselineStateRef.current.toFixed(6) : 'Unknown';
 
-    const header = [
-      `Date,${dateStr}`,
-      `Start Time,${timeStr}`,
-      `Baseline (V),${baselineStr}`,
-      '',
-      'Time (s),Baseline (V),Vref (V),Reading (V),Value (V)',
-    ].join('\n');
+    // Add header rows as separate key,value cells
+    logEntriesRef.current.push(`Date,${dateStr}`);
+    logEntriesRef.current.push(`Start Time,${timeStr}`);
+    logEntriesRef.current.push(`Baseline (V),${baselineStr}`);
+    logEntriesRef.current.push(''); // Blank line
+    logEntriesRef.current.push('Time (s),Baseline (V),Vref (V),Reading (V),Value (V)');
 
-    setLogEntries([header]);
-    setIsLogging(true);
     ToastAndroid.show('Started logging', ToastAndroid.SHORT);
   }
 
   async function stopLogging() {
-    if (!isLogging) {
+    if (!isLoggingRef.current) {
       ToastAndroid.show('Not currently logging', ToastAndroid.SHORT);
       return;
     }
     setIsLogging(false);
 
-    if (logEntries.length <= 5) {
+    if (logEntriesRef.current.length <= 5) {
       ToastAndroid.show('No data logged.', ToastAndroid.SHORT);
       return;
     }
@@ -220,12 +230,11 @@ export default function App() {
     }
 
     try {
-      await FileSystem.writeAsStringAsync(fileUri, logEntries.join('\n'));
+      await FileSystem.writeAsStringAsync(fileUri, logEntriesRef.current.join('\n'));
       setLastSavedFileUri(fileUri);
       ToastAndroid.show(`CSV saved: ${fileUri}`, ToastAndroid.SHORT);
     } catch (e) {
       ToastAndroid.show('Failed to save CSV file.', ToastAndroid.SHORT);
-      // console.error(e);
     }
   }
 
