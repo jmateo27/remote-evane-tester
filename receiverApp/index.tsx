@@ -38,10 +38,10 @@ export default function App() {
   const [connecting, setConnecting] = useState(false);
   const [scanTime, setScanTime] = useState<number>(0);
 
-  // Logging state
+  // Logging state in React state only
   const [isLogging, setIsLogging] = useState(false);
-  const loggingStartTimeRef = useRef<number | null>(null);
-  const logEntriesRef = useRef<string[]>([]);
+  const [loggingStartTime, setLoggingStartTime] = useState<number | null>(null);
+  const [logEntries, setLogEntries] = useState<string[]>([]);
   const [lastSavedFileUri, setLastSavedFileUri] = useState<string | null>(null);
 
   function updateBaseline(value: number) {
@@ -140,20 +140,15 @@ export default function App() {
           return [...filtered, { timestamp: now, value: val }];
         });
 
-        if (isLogging && loggingStartTimeRef.current !== null) {
-          const timeSinceStart = ((now - loggingStartTimeRef.current) / 1000).toFixed(3);
+        if (isLogging && loggingStartTime !== null) {
+          const timeSinceStart = ((now - loggingStartTime) / 1000).toFixed(3);
           const baselineStr = Baseline !== null ? Baseline.toFixed(6) : '';
           const vrefStr = Vref !== null ? Vref.toFixed(6) : '';
           const readingStr = second.toFixed(6);
           const valueStr = val.toFixed(6);
 
           const entry = `${timeSinceStart},${baselineStr},${vrefStr},${readingStr},${valueStr}`;
-          // Append to ref to avoid stale closure
-          logEntriesRef.current = [...logEntriesRef.current, entry];
-          // Also update state for UI if needed
-          setLogEntries(logEntriesRef.current);
-          // Debug log
-          // console.log('Logged entry:', entry);
+          setLogEntries((prev) => [...prev, entry]);
         }
       }
     });
@@ -170,21 +165,23 @@ export default function App() {
     setValue(null);
     setValueHistory([]);
     setIsLogging(false);
-    loggingStartTimeRef.current = null;
-    logEntriesRef.current = [];
+    setLoggingStartTime(null);
     setLogEntries([]);
     if (scanTimerRef.current) clearInterval(scanTimerRef.current);
   }
 
   async function startLogging() {
+    if (isLogging) {
+      ToastAndroid.show('Already logging', ToastAndroid.SHORT);
+      return;
+    }
     const now = new Date();
-    loggingStartTimeRef.current = now.getTime();
+    setLoggingStartTime(now.getTime());
 
     const dateStr = now.toLocaleDateString().replaceAll('/', '-');
     const timeStr = now.toLocaleTimeString();
     const baselineStr = Baseline !== null ? Baseline.toFixed(6) : 'Unknown';
 
-    // CSV header with metadata and columns, metadata as separate cells
     const header = [
       `Date,${dateStr}`,
       `Start Time,${timeStr}`,
@@ -193,14 +190,19 @@ export default function App() {
       'Time (s),Baseline (V),Vref (V),Reading (V),Value (V)',
     ].join('\n');
 
-    logEntriesRef.current = [header];
-    setLogEntries(logEntriesRef.current);
+    setLogEntries([header]);
     setIsLogging(true);
+    ToastAndroid.show('Started logging', ToastAndroid.SHORT);
   }
 
   async function stopLogging() {
+    if (!isLogging) {
+      ToastAndroid.show('Not currently logging', ToastAndroid.SHORT);
+      return;
+    }
     setIsLogging(false);
-    if (logEntriesRef.current.length <= 5) {
+
+    if (logEntries.length <= 5) {
       ToastAndroid.show('No data logged.', ToastAndroid.SHORT);
       return;
     }
@@ -218,12 +220,12 @@ export default function App() {
     }
 
     try {
-      await FileSystem.writeAsStringAsync(fileUri, logEntriesRef.current.join('\n'));
+      await FileSystem.writeAsStringAsync(fileUri, logEntries.join('\n'));
       setLastSavedFileUri(fileUri);
       ToastAndroid.show(`CSV saved: ${fileUri}`, ToastAndroid.SHORT);
     } catch (e) {
       ToastAndroid.show('Failed to save CSV file.', ToastAndroid.SHORT);
-      // console.error('Write error:', e);
+      // console.error(e);
     }
   }
 
@@ -308,10 +310,11 @@ export default function App() {
               <>
                 <Button title="Stop Logging" onPress={stopLogging} />
                 <Text style={{ marginTop: 10 }}>
-                  Logging... {((Date.now() - (loggingStartTimeRef.current ?? 0)) / 1000).toFixed(1)} s
+                  Logging... {((Date.now() - (loggingStartTime ?? 0)) / 1000).toFixed(1)} s
                 </Text>
               </>
             )}
+
             <View style={{ marginTop: 10 }}>
               <Button title="Share CSV" onPress={shareLatestCSV} />
             </View>
