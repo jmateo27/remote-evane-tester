@@ -11,7 +11,7 @@ import {
   View,
 } from 'react-native';
 import { BleManager, Device } from 'react-native-ble-plx';
-import { LineChart, Grid, XAxis, YAxis } from 'react-native-svg-charts';
+import { LineChart, Grid } from 'react-native-svg-charts';
 import * as scale from 'd3-scale';
 import * as FileSystem from 'expo-file-system';
 
@@ -31,13 +31,13 @@ export default function App() {
   const [Vref, setVref] = useState<number | null>(null);
   const [Reading, setReading] = useState<number | null>(null);
   const [Value, setValue] = useState<number | null>(null);
+  const [valueHistory, setValueHistory] = useState<{ timestamp: number; value: number }[]>([]);
+
   const [connectedDevice, setConnectedDevice] = useState<Device | null>(null);
   const [connecting, setConnecting] = useState(false);
   const [scanTime, setScanTime] = useState<number>(0);
 
-  const [graphData, setGraphData] = useState<{ x: number; y: number; timestamp: number }[]>([]);
-  const maxXRef = useRef(0.5);
-
+  // Logging state
   const [isLogging, setIsLogging] = useState(false);
   const [loggingStartTime, setLoggingStartTime] = useState<number | null>(null);
   const [logEntries, setLogEntries] = useState<string[]>([]);
@@ -51,15 +51,30 @@ export default function App() {
     if (Platform.OS === 'android') {
       if (Platform.Version < 31) {
         const granted = await PermissionsAndroid.request(
-          PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION
+          PermissionsAndroid.PERMISSIONS.ACCESS_FINE_LOCATION,
+          {
+            title: 'Location Permission Required',
+            message: 'Location permission is needed to scan for BLE devices',
+            buttonPositive: 'OK',
+          }
         );
         return granted === PermissionsAndroid.RESULTS.GRANTED;
       } else {
         const grantedScan = await PermissionsAndroid.request(
-          PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN
+          PermissionsAndroid.PERMISSIONS.BLUETOOTH_SCAN,
+          {
+            title: 'Bluetooth Scan Permission Required',
+            message: 'Bluetooth scan permission is needed to find devices',
+            buttonPositive: 'OK',
+          }
         );
         const grantedConnect = await PermissionsAndroid.request(
-          PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT
+          PermissionsAndroid.PERMISSIONS.BLUETOOTH_CONNECT,
+          {
+            title: 'Bluetooth Connect Permission Required',
+            message: 'Bluetooth connect permission is needed to connect to devices',
+            buttonPositive: 'OK',
+          }
         );
         return (
           grantedScan === PermissionsAndroid.RESULTS.GRANTED &&
@@ -72,16 +87,22 @@ export default function App() {
 
   async function startScanAndConnect() {
     const permission = await requestPermissions();
-    if (!permission) return;
+    if (!permission) {
+      setConnecting(false);
+      return;
+    }
 
     setScanTime(0);
     setConnecting(true);
 
     if (scanTimerRef.current) clearInterval(scanTimerRef.current);
-    scanTimerRef.current = setInterval(() => setScanTime((s) => s + 1), 1000);
+    scanTimerRef.current = setInterval(() => {
+      setScanTime((prev) => prev + 1);
+    }, 1000);
 
     bleManager.startDeviceScan(null, null, async (error, device) => {
       if (error) {
+        console.warn('Scan error:', error);
         bleManager.stopDeviceScan();
         clearInterval(scanTimerRef.current!);
         setConnecting(false);
@@ -91,16 +112,24 @@ export default function App() {
       if (device?.name === TARGET_NAME) {
         bleManager.stopDeviceScan();
         clearInterval(scanTimerRef.current!);
+
         try {
           const connected = await device.connect();
           await connected.discoverAllServicesAndCharacteristics();
           setConnectedDevice(connected);
           monitorNotifications(connected);
+
           ToastAndroid.show(`Connected in ${scanTime} seconds.`, ToastAndroid.SHORT);
-          connected.onDisconnected(disconnect);
-        } catch {
+
+          connected.onDisconnected(() => {
+            ToastAndroid.show('Device disconnected', ToastAndroid.SHORT);
+            disconnect();
+          });
+        } catch (e) {
+          console.warn('Connection failed:', e);
           ToastAndroid.show('Connection failed', ToastAndroid.SHORT);
         }
+
         setConnecting(false);
         setScanTime(0);
       }
@@ -111,53 +140,73 @@ export default function App() {
     device.monitorCharacteristicForService(
       SERVICE_UUID,
       CHARACTERISTIC_UUID,
-      (_, characteristic) => {
-        const decoded = Buffer.from(characteristic?.value ?? '', 'base64').toString('utf-8');
-        const match = decoded.match(/^([BV]),(-?\d+(\.\d+)?),(-?\d+(\.\d+)?)$/);
-        if (!match) return;
+      (error, characteristic) => {
+        if (error) {
+          console.warn('Notification error:', error);
+          disconnect();
+          return;
+        }
 
-        const type = match[1];
-        const first = parseFloat(match[2]);
-        const second = parseFloat(match[4]);
-        setReading(second);
+        if (characteristic?.value) {
+          const decoded = Buffer.from(characteristic.value, 'base64').toString('utf-8');
+          const isValid = /^[BV]-?\d+(\.\d+)?,-?\d+(\.\d+)?$/.test(decoded);
+          if (!isValid) return;
 
-        if (type === 'B') updateBaseline(first);
-        else setVref(first);
+          const type = decoded.charAt(0);
+          const [firstStr, secondStr] = decoded.slice(1).split(',');
+          const firstFloat = parseFloat(firstStr);
+          const secondFloat = parseFloat(secondStr);
 
-        if (baselineRef.current !== null) {
-          const value = second - baselineRef.current;
-          setValue(value);
+          if (isNaN(firstFloat) || isNaN(secondFloat)) return;
 
-          const now = Date.now();
-          if (value > maxXRef.current) maxXRef.current = value;
-          else maxXRef.current = maxXRef.current * 0.95 + value * 0.05;
+          setReading(secondFloat);
 
-          setGraphData((data) => {
-            const filtered = data.filter((d) => now - d.timestamp < MAX_GRAPH_SECONDS * 1000);
-            const oldestTimestamp = filtered[0]?.timestamp ?? now;
-            const updatedData = [...filtered, { x: value, y: (now - oldestTimestamp) / 1000, timestamp: now }];
-            return updatedData.slice(-100);
-          });
+          if (type === 'B') {
+            updateBaseline(firstFloat);
+          } else if (type === 'V') {
+            setVref(firstFloat);
+          }
 
-          if (isLogging && loggingStartTime !== null) {
-            const timeSinceStart = ((now - loggingStartTime) / 1000).toFixed(3);
-            setLogEntries((prev) => [...prev, `${timeSinceStart},${value.toFixed(6)}`]);
+          if (baselineRef.current !== null) {
+            const val = secondFloat - baselineRef.current;
+            setValue(val);
+            const now = Date.now();
+
+            // Update graph data
+            setValueHistory((prev) => {
+              const filtered = prev.filter((d) => now - d.timestamp < MAX_GRAPH_SECONDS * 1000);
+              return [...filtered, { timestamp: now, value: val }];
+            });
+
+            // Add log entry if logging
+            if (isLogging && loggingStartTime !== null) {
+              const timeSinceStart = ((now - loggingStartTime) / 1000).toFixed(3);
+              setLogEntries((prev) => [...prev, `${timeSinceStart},${val.toFixed(6)}`]);
+            }
           }
         }
       }
     );
   }
 
-  function disconnect() {
-    connectedDevice?.cancelConnection();
+  async function disconnect() {
+    if (connectedDevice) {
+      try {
+        await connectedDevice.cancelConnection();
+      } catch (e) {
+        console.warn('Disconnect error:', e);
+      }
+    }
     setConnectedDevice(null);
     setBaseline(null);
     setVref(null);
     setReading(null);
     setValue(null);
+    setValueHistory([]);
     setConnecting(false);
-    setGraphData([]);
-    maxXRef.current = 0.5;
+    setIsLogging(false);
+    setLoggingStartTime(null);
+    setLogEntries([]);
     if (scanTimerRef.current) clearInterval(scanTimerRef.current);
   }
 
@@ -187,13 +236,19 @@ export default function App() {
     ToastAndroid.show('CSV file saved', ToastAndroid.SHORT);
   }
 
-  // Prepare graph data with y inverted to increase downward (as before)
-  const filteredGraphData = graphData
-    .filter((item) => item.y !== undefined)
-    .map(({ x, y }) => ({ x, y: MAX_GRAPH_SECONDS - y }));
+  useEffect(() => {
+    return () => {
+      bleManager.destroy();
+      if (scanTimerRef.current) clearInterval(scanTimerRef.current);
+    };
+  }, []);
 
-  const maxX = Math.max(0.5, maxXRef.current * 1.1);
-  const yTicks = Array.from({ length: MAX_GRAPH_SECONDS + 1 }, (_, i) => i);
+  const now = Date.now();
+  const graphData = valueHistory
+    .filter((d) => now - d.timestamp < MAX_GRAPH_SECONDS * 1000)
+    .map((d) => ({ y: (now - d.timestamp) / 1000, x: d.value }));
+
+  const maxX = Math.max(0.2, ...graphData.map((d) => d.x));
 
   return (
     <View style={styles.container}>
@@ -232,66 +287,25 @@ export default function App() {
             </Text>
           </View>
 
-          <View style={{ height: 240, flexDirection: 'row', paddingHorizontal: 10, marginTop: 20 }}>
-            {/* Y Axis */}
-            <View style={{ marginRight: 5 }}>
-              <YAxis
-                style={{ height: 200 }}
-                data={yTicks}
-                numberOfTicks={MAX_GRAPH_SECONDS + 1}
-                formatLabel={(value) => `${value}`}
-                contentInset={{ top: 10, bottom: 10 }}
-                svg={{ fontSize: 10, fill: 'black' }}
-                min={0}
-                max={MAX_GRAPH_SECONDS}
-                scale={scale.scaleLinear}
-              />
-              <Text
-                style={{
-                  fontSize: 12,
-                  textAlign: 'center',
-                  marginTop: 5,
-                  width: 200,
-                  alignSelf: 'center',
-                }}
-              >
-                Time (s)
-              </Text>
-            </View>
-
-            {/* Chart + X Axis */}
-            <View style={{ flex: 1 }}>
-              <LineChart
-                style={{ height: 200 }}
-                data={filteredGraphData}
-                yAccessor={({ item }) => item.y}
-                xAccessor={({ item }) => item.x}
-                svg={{ stroke: 'rgb(34, 128, 176)', strokeWidth: 2 }}
-                contentInset={{ top: 10, bottom: 10, left: 10, right: 10 }}
-                xMin={-0.1}
-                xMax={maxX}
-                yMin={0}
-                yMax={MAX_GRAPH_SECONDS}
-                scale={scale.scaleLinear}
-                numberOfTicks={MAX_GRAPH_SECONDS}
-              >
-                <Grid direction={Grid.Direction.HORIZONTAL} />
-              </LineChart>
-
-              <XAxis
-                style={{ marginTop: 5 }}
-                data={[...Array(5).keys()].map(i => -0.1 + (maxX + 0.1) * (i / 4))}
-                formatLabel={(value) => value.toFixed(2)}
-                svg={{ fontSize: 10, fill: 'black' }}
-                scale={scale.scaleLinear}
-                contentInset={{ left: 10, right: 10 }}
-              />
-
-              <Text style={{ textAlign: 'center', fontSize: 12, marginTop: 4 }}>Value (V)</Text>
-            </View>
+          <View style={{ marginTop: 20, height: 200, padding: 10 }}>
+            <LineChart
+              style={{ flex: 1 }}
+              data={graphData}
+              yAccessor={({ item }) => item.y}
+              xAccessor={({ item }) => item.x}
+              svg={{ stroke: 'rgb(34, 128, 176)', strokeWidth: 2 }}
+              contentInset={{ top: 10, bottom: 10 }}
+              xMin={-0.1}
+              xMax={maxX}
+              yMin={0}
+              yMax={MAX_GRAPH_SECONDS}
+              scale={scale.scaleLinear}
+              numberOfTicks={MAX_GRAPH_SECONDS}
+            >
+              <Grid direction={Grid.Direction.HORIZONTAL} />
+            </LineChart>
           </View>
 
-          {/* Logging buttons */}
           <View style={{ marginTop: 20 }}>
             {!isLogging ? (
               <Button title="Start Logging" onPress={startLogging} />
