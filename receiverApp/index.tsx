@@ -38,6 +38,7 @@ export default function App() {
   const [connecting, setConnecting] = useState(false);
   const [scanTime, setScanTime] = useState<number>(0);
 
+  // Logging
   const [isLogging, setIsLogging] = useState(false);
   const [loggingStartTime, setLoggingStartTime] = useState<number | null>(null);
   const [logEntries, setLogEntries] = useState<string[]>([]);
@@ -141,9 +142,10 @@ export default function App() {
 
         if (isLogging && loggingStartTime !== null) {
           const timeSinceStart = ((now - loggingStartTime) / 1000).toFixed(3);
+          // Log full CSV row: time(s), baseline, vref, reading, value
           setLogEntries((prev) => [
             ...prev,
-            `${timeSinceStart},${Baseline ?? ''},${Vref ?? ''},${Reading ?? ''},${val.toFixed(6)}`
+            `${timeSinceStart},${(Baseline ?? '').toFixed?.(6) ?? ''},${(Vref ?? '').toFixed?.(6) ?? ''},${second.toFixed(6)},${val.toFixed(6)}`,
           ]);
         }
       }
@@ -169,21 +171,25 @@ export default function App() {
   async function startLogging() {
     const now = new Date();
     setLoggingStartTime(now.getTime());
-    const dateStr = now.toISOString().split('T')[0];
+    const dateStr = now.toLocaleDateString().replaceAll('/', '-');
     const timeStr = now.toLocaleTimeString();
+
+    // CSV header with metadata and columns, metadata as separate cells
     const header = [
       `Date,${dateStr}`,
       `Start Time,${timeStr}`,
+      `Baseline (V),${Baseline !== null ? Baseline.toFixed(6) : 'Unknown'}`,
       '',
-      'Time(s),Baseline(V),Vref(V),Reading(V),Value(V)'
-    ];
-    setLogEntries(header);
+      'Time (s),Baseline (V),Vref (V),Reading (V),Value (V)',
+    ].join('\n');
+
+    setLogEntries([header]);
     setIsLogging(true);
   }
 
   async function stopLogging() {
     setIsLogging(false);
-    if (!logEntries || logEntries.length <= 4) {
+    if (logEntries.length <= 1) {
       ToastAndroid.show('No data logged.', ToastAndroid.SHORT);
       return;
     }
