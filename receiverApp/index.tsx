@@ -11,7 +11,7 @@ import {
   View,
 } from 'react-native';
 import { BleManager, Device } from 'react-native-ble-plx';
-import { LineChart, Grid, XAxis } from 'react-native-svg-charts';
+import { LineChart, Grid, XAxis, YAxis } from 'react-native-svg-charts';
 import * as scale from 'd3-scale';
 
 (global as any).Buffer = Buffer;
@@ -19,6 +19,7 @@ import * as scale from 'd3-scale';
 const SERVICE_UUID = '181A';
 const CHARACTERISTIC_UUID = '2A6E';
 const TARGET_NAME = 'TRANSMITTER';
+
 const MAX_GRAPH_SECONDS = 10;
 
 export default function App() {
@@ -30,11 +31,14 @@ export default function App() {
   const [Vref, setVref] = useState<number | null>(null);
   const [Reading, setReading] = useState<number | null>(null);
   const [Value, setValue] = useState<number | null>(null);
-  const [valueHistory, setValueHistory] = useState<{ timestamp: number; value: number }[]>([]);
 
   const [connectedDevice, setConnectedDevice] = useState<Device | null>(null);
   const [connecting, setConnecting] = useState(false);
   const [scanTime, setScanTime] = useState<number>(0);
+
+  // Holds timestamped data for the graph
+  const [graphData, setGraphData] = useState<{ x: number; y: number }[]>([]);
+  const maxXRef = useRef(0.5); // Keep track of max x to smooth dynamic axis
 
   function updateBaseline(value: number) {
     baselineRef.current = value;
@@ -162,12 +166,25 @@ export default function App() {
           }
 
           if (baselineRef.current !== null) {
-            const val = secondFloat - baselineRef.current;
-            setValue(val);
-            const now = Date.now();
-            setValueHistory((prev) => {
-              const filtered = prev.filter((d) => now - d.timestamp < MAX_GRAPH_SECONDS * 1000);
-              return [...filtered, { timestamp: now, value: val }];
+            const newValue = secondFloat - baselineRef.current;
+            setValue(newValue);
+
+            // Update max X for axis scaling, but smooth it
+            if (newValue > maxXRef.current) {
+              maxXRef.current = newValue;
+            } else {
+              maxXRef.current = maxXRef.current * 0.95 + newValue * 0.05; // smoothing factor
+            }
+
+            // Update graph data (keep last 10 seconds)
+            setGraphData((data) => {
+              const now = Date.now();
+              const cutoff = now - MAX_GRAPH_SECONDS * 1000;
+              const filtered = data.filter((item) => item.y > 0 && item.timestamp > cutoff);
+              return [
+                ...filtered,
+                { x: newValue, y: scanTime, timestamp: now } as any,
+              ].slice(-100); // limit max points
             });
           }
         }
@@ -188,9 +205,10 @@ export default function App() {
     setVref(null);
     setReading(null);
     setValue(null);
-    setValueHistory([]);
     setConnecting(false);
     if (scanTimerRef.current) clearInterval(scanTimerRef.current);
+    setGraphData([]);
+    maxXRef.current = 0.5;
   }
 
   useEffect(() => {
@@ -200,15 +218,16 @@ export default function App() {
     };
   }, []);
 
-  const now = Date.now();
-  const graphData = valueHistory
-    .filter((d) => now - d.timestamp < MAX_GRAPH_SECONDS * 1000)
-    .map((d) => ({ y: (now - d.timestamp) / 1000, x: d.value })) // time in seconds ago
+  // Prepare graph data - map to {x, y} with y inverted to increase downwards
+  const filteredGraphData = graphData
+    .filter((item) => item.y !== undefined)
+    .map(({ x, y }) => ({ x, y: MAX_GRAPH_SECONDS - y }));
 
-  const maxX = Math.max(
-    0.2,
-    ...graphData.map((d) => d.x),
-  );
+  // X axis max value (smooth)
+  const maxX = Math.max(0.5, maxXRef.current * 1.1);
+
+  // Y axis ticks for time 0..MAX_GRAPH_SECONDS
+  const yTicks = Array.from({ length: MAX_GRAPH_SECONDS + 1 }, (_, i) => i);
 
   return (
     <View style={styles.container}>
@@ -247,24 +266,65 @@ export default function App() {
             </Text>
           </View>
 
-          <Text style={{ marginTop: 20, fontWeight: 'bold' }}>Last {MAX_GRAPH_SECONDS}s (Value vs Time)</Text>
-          <View style={{ height: 200, padding: 10 }}>
-            <LineChart
-              style={{ flex: 1 }}
-              data={graphData}
-              yAccessor={({ item }) => item.y}
-              xAccessor={({ item }) => item.x}
-              svg={{ stroke: 'rgb(34, 128, 176)', strokeWidth: 2 }}
-              contentInset={{ top: 10, bottom: 10 }}
-              xMin={-0.1}
-              xMax={maxX}
-              yMin={0}
-              yMax={MAX_GRAPH_SECONDS}
-              scale={scale.scaleLinear}
-              numberOfTicks={MAX_GRAPH_SECONDS}
-            >
-              <Grid direction={Grid.Direction.HORIZONTAL} />
-            </LineChart>
+          {/* Graph with labeled axes */}
+          <View style={{ height: 240, flexDirection: 'row', paddingHorizontal: 10, marginTop: 20 }}>
+            {/* Y Axis */}
+            <View style={{ marginRight: 5 }}>
+              <YAxis
+                style={{ height: 200 }}
+                data={yTicks}
+                numberOfTicks={MAX_GRAPH_SECONDS + 1}
+                formatLabel={(value) => `${value}`}
+                contentInset={{ top: 10, bottom: 10 }}
+                svg={{ fontSize: 10, fill: 'black' }}
+                min={0}
+                max={MAX_GRAPH_SECONDS}
+                scale={scale.scaleLinear}
+              />
+              <Text
+                style={{
+                  fontSize: 12,
+                  textAlign: 'center',
+                  marginTop: 5,
+                  transform: [{ rotate: '-90deg' }],
+                  width: 200,
+                  alignSelf: 'center',
+                }}
+              >
+                Time (s)
+              </Text>
+            </View>
+
+            {/* Chart + X Axis */}
+            <View style={{ flex: 1 }}>
+              <LineChart
+                style={{ height: 200 }}
+                data={filteredGraphData}
+                yAccessor={({ item }) => item.y}
+                xAccessor={({ item }) => item.x}
+                svg={{ stroke: 'rgb(34, 128, 176)', strokeWidth: 2 }}
+                contentInset={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                xMin={-0.1}
+                xMax={maxX}
+                yMin={0}
+                yMax={MAX_GRAPH_SECONDS}
+                scale={scale.scaleLinear}
+                numberOfTicks={MAX_GRAPH_SECONDS}
+              >
+                <Grid direction={Grid.Direction.HORIZONTAL} />
+              </LineChart>
+
+              <XAxis
+                style={{ marginTop: 5 }}
+                data={[...Array(5).keys()].map(i => -0.1 + (maxX + 0.1) * (i / 4))} // 5 ticks
+                formatLabel={(value) => value.toFixed(2)}
+                svg={{ fontSize: 10, fill: 'black' }}
+                scale={scale.scaleLinear}
+                contentInset={{ left: 10, right: 10 }}
+              />
+
+              <Text style={{ textAlign: 'center', fontSize: 12, marginTop: 4 }}>Value (V)</Text>
+            </View>
           </View>
         </>
       )}
