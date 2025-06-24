@@ -22,6 +22,7 @@ export default function App() {
   const bleManager = useRef(new BleManager()).current;
   const baselineRef = useRef<number | null>(null);
   const scanTimerRef = useRef<NodeJS.Timer | null>(null);
+  const scanSecondsRef = useRef<number>(0);
 
   const [Baseline, setBaseline] = useState<number | null>(null);
   const [Vref, setVref] = useState<number | null>(null);
@@ -83,11 +84,16 @@ export default function App() {
     }
 
     setScanTime(0);
+    scanSecondsRef.current = 0;
     setConnecting(true);
 
     if (scanTimerRef.current) clearInterval(scanTimerRef.current);
     scanTimerRef.current = setInterval(() => {
-      setScanTime((prev) => prev + 1);
+      setScanTime((prev) => {
+        const next = prev + 1;
+        scanSecondsRef.current = next;
+        return next;
+      });
     }, 1000);
 
     bleManager.startDeviceScan(null, null, async (error, device) => {
@@ -109,7 +115,10 @@ export default function App() {
           setConnectedDevice(connected);
           monitorNotifications(connected);
 
-          ToastAndroid.show(`Connected in ${scanTime} seconds.`, ToastAndroid.SHORT);
+          ToastAndroid.show(
+            `Connected in ${scanSecondsRef.current} seconds.`,
+            ToastAndroid.SHORT
+          );
 
           connected.onDisconnected(() => {
             ToastAndroid.show('Device disconnected', ToastAndroid.SHORT);
