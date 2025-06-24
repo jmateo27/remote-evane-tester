@@ -1,10 +1,10 @@
 {
   "expo": {
-    "name": "my-ble-app",
-    "slug": "my-ble-app",
-    "version": "1.0.0",
+    "name": "Remote Vane Tester",
+    "slug": "remote-vane-tester",
+    "version": "1.0.1",
     "orientation": "portrait",
-    "icon": "./assets/images/icon.png",
+    "icon": "./assets/icon.png",
     "scheme": "mybleapp",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
@@ -13,16 +13,17 @@
     },
     "android": {
       "adaptiveIcon": {
-        "foregroundImage": "./assets/images/adaptive-icon.png",
+        "foregroundImage": "./assets/icon.png",
         "backgroundColor": "#ffffff"
       },
       "edgeToEdgeEnabled": true,
       "permissions": [
         "android.permission.BLUETOOTH",
         "android.permission.BLUETOOTH_ADMIN",
-        "android.permission.ACCESS_FINE_LOCATION"
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.BLUETOOTH_CONNECT"
       ],
-      "package": "com.anonymous.mybleapp",
+      "package": "com.anonymous.remotevanetester",
       "features": [
         {
           "android:name": "android.hardware.bluetooth_le",
@@ -33,14 +34,14 @@
     "web": {
       "bundler": "metro",
       "output": "static",
-      "favicon": "./assets/images/favicon.png"
+      "favicon": "./assets/icon.png"
     },
     "plugins": [
       "expo-router",
       [
         "expo-splash-screen",
         {
-          "image": "./assets/images/splash-icon.png",
+          "image": "./assets/icon.png",
           "imageWidth": 200,
           "resizeMode": "contain",
           "backgroundColor": "#ffffff"
@@ -63,6 +64,12 @@
     ],
     "experiments": {
       "typedRoutes": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "a4d978c6-678a-4a63-9812-6693aafd6714"
+      }
     }
   }
 }
