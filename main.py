@@ -7,7 +7,7 @@ from collections import deque
 
 class EnableInterface:
     ENABLE_PIN = 16
-    ENABLE_RISE_TIME_S = 0.00001
+    ENABLE_RISE_TIME_S = 0.001
 
     def __init__(self):
         self.pin = machine.Pin(self.ENABLE_PIN, machine.Pin.OUT, machine.Pin.PULL_DOWN, value=0)
@@ -41,7 +41,7 @@ class MainBluetoothTransmission:
     BLE_CHARACTERISTIC_UUID = bluetooth.UUID(0x2A6E)
     BLE_APPEARANCE = 0x0300
     BLE_ADVERTISING_INTERVAL = 100
-    SEND_LATENCY_MS = 2000
+    SEND_LATENCY_MS = 250
 
     SWITCH_PIN = 17
     DEBOUNCE_TIME_MS = 500
@@ -94,6 +94,8 @@ class MainBluetoothTransmission:
                 smoothed_reading, vref = await self.get_smoothed_vane()
                 send_iter = (send_iter + 1) % self.DEQUE_SIZE
                 if send_iter > 0:
+                    elapsed = time.ticks_ms() - start_time
+                    await asyncio.sleep_ms(int(self.SEND_LATENCY_MS / self.DEQUE_SIZE - elapsed))
                     continue
 #                 reading = await self.measurement()
                 if msg_iter == 0:
