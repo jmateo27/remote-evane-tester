@@ -57,11 +57,14 @@ class MainBluetoothTransmission:
 #         self.vane_init = self.adcs.measure_vane()
 #         self.readings.append(self.vane_init)
 #         self.enable.off()
-        self.vane_init = asyncio.run(self.measurement())
+        self.vane_init = None
 
         self.switch_pin = machine.Pin(self.SWITCH_PIN, machine.Pin.IN, machine.Pin.PULL_UP)
         self.switch_pin.irq(trigger=machine.Pin.IRQ_RISING, handler = self.switch_handler)
         self.switch_time_prev = -1
+        
+    async def set_baseline(self):
+        self.vane_init = await self.measurement()
         
     async def measurement(self):
         self.enable.on()
@@ -87,7 +90,7 @@ class MainBluetoothTransmission:
 #                 self.vane_init = self.adcs.measure_vane()
 #                 self.enable.off()
 #                 time.sleep(self.enable.ENABLE_RISE_TIME_S)
-                self.vane_init = asyncio.run(self.measurement())
+                asyncio.create_task(self.set_baseline())
                 print("Baseline re-evaluated")
 
     async def send_data_task(self, connection, characteristic):
@@ -156,6 +159,7 @@ class MainBluetoothTransmission:
 
 async def main():
     transmitter = MainBluetoothTransmission()
+    await transmitter.set_baseline()
     while True:
         await transmitter.run_transmitter_mode()
 
